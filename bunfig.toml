@@ -1,0 +1,12 @@
+[install]
+# Only install package versions published at least 24 hours ago (86400 seconds)
+# This protects against supply chain attacks from freshly published malicious packages
+minimumReleaseAge = 86400
+
+# Exclude wormhole packages from the minimum release age requirement
+# These are trusted internal packages that we want to consume immediately
+# Note: Bun doesn't support wildcards yet, so we must list each package explicitly
+# This list is generated from `bun pm ls --all | grep @wormhole-`
+minimumReleaseAgeExcludes = [
+
+]

@@ -2,10 +2,10 @@
 # Auto-fix linting and formatting issues, then re-stage fixed files
 
 # Fix formatting issues
-npm run format
+bun run format
 
 # Fix linting issues (auto-fixable ones)
-npm run lint -- --fix
+bun run lint -- --fix
 
 # Re-stage any files that were modified by the fixes
 git add -u

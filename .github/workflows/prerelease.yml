@@ -74,11 +74,10 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Install pnpm
-        uses: pnpm/action-setup@v4
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@4bc047ad259df6fc24a6c9b0f9a0cb08cf17fbe5 # pinning the commit to v2
         with:
-          version: 10
-          run_install: false
+          bun-version: latest
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -87,10 +86,10 @@ jobs:
           registry-url: "https://registry.npmjs.org"
 
       - name: Install dependencies
-        run: pnpm install --frozen-lockfile
+        run: bun install --frozen-lockfile
 
       - name: Build package
-        run: pnpm build
+        run: bun run build
 
       - name: Audit signatures
         run: npm audit signatures
@@ -105,11 +104,11 @@ jobs:
       - name: Create Pre-release
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
           NPM_CONFIG_PROVENANCE: true
         run: |
-          # Run semantic-release
-          npx semantic-release
+          # Run semantic-release with OIDC authentication
+          # NPM authentication is handled automatically via GitHub OIDC
+          bunx semantic-release
 
       - name: Security Audit
         run: |
