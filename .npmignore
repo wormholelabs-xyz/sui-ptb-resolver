@@ -1,0 +1,36 @@
+# Source files (we only publish built files)
+src/
+tests/
+
+# Configuration files not needed by consumers
+.commitlintrc.js
+.prettierrc.js
+eslint.config.js
+jest.config.js
+tsconfig.json
+
+# GitHub specific files
+.github/
+CODEOWNERS
+
+# Development files
+.husky/
+coverage/
+*.log
+*.tgz
+.env
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Keep the config directory and built files
+!config/
+!dist/

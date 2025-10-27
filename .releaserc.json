@@ -1,0 +1,35 @@
+{
+  "branches": [
+    "release",
+    "hotfix/*",
+    { "name": "main", "prerelease": "development" }
+  ],
+  "plugins": [
+    "semantic-release-unsquash",
+    [
+      "@semantic-release/changelog",
+      {
+        "changelogFile": "CHANGELOG.md"
+      }
+    ],
+    [
+      "@semantic-release/npm",
+      {
+        "npmPublish": true,
+        "tarballDir": "dist"
+      }
+    ],
+    [
+      "@semantic-release/github",
+      {
+        "assets": [
+          {
+            "path": "dist/*.tgz",
+            "label": "Package tarball"
+          }
+        ],
+        "addReleases": "bottom"
+      }
+    ]
+  ]
+}

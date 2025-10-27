@@ -1,0 +1,97 @@
+{
+  "name": "@wormhole-labs/sui-ptb-resolver",
+  "version": "0.0.0-development",
+  "description": "SUI PTB resolver - SDK and Move packages for on-chain modules to describe off chain PTB building and resolving data.",
+  "private": false,
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./commitlint": "./config/commitlint.config.mjs",
+    "./prettier": "./config/prettier.config.js",
+    "./eslint": "./config/eslint.config.js",
+    "./package.json": "./package.json"
+  },
+  "scripts": {
+    "build:resolver": "sui move build -p wormhole_token_bridge_resolver",
+    "test:resolver": "sui move test -p wormhole_token_bridge_resolver",
+    "prepare": "husky",
+    "build": "tsc",
+    "prebuild": "rm -rf dist",
+    "lint": "eslint .",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "validate": "npm run lint && npm run format:check",
+    "test:release": "GH_TOKEN=$(gh auth token) npx semantic-release --dry-run"
+  },
+  "keywords": [
+    "wormhole",
+    "sui",
+    "ptb",
+    "commitlint",
+    "prettier",
+    "eslint",
+    "release-automation"
+  ],
+  "author": "Wormhole Labs",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/wormholelabs-xyz/sui-ptb-resolver.git"
+  },
+  "bugs": {
+    "url": "https://github.com/wormholelabs-xyz/sui-ptb-resolve/issues"
+  },
+  "homepage": "https://github.com/wormholelabs-xyz/sui-ptb-resolve#readme",
+  "files": [
+    "dist",
+    "config",
+    "README.md",
+    "LICENSE"
+  ],
+  "devDependencies": {
+    "@commitlint/cli": "^19.8.1",
+    "@commitlint/config-conventional": "^19.8.1",
+    "@eslint/js": "^9.30.1",
+    "@semantic-release/changelog": "^6.0.3",
+    "@semantic-release/github": "^11.0.3",
+    "@semantic-release/npm": "^12.0.2",
+    "@types/node": "^22.10.5",
+    "@typescript-eslint/eslint-plugin": "^8.36.0",
+    "@typescript-eslint/parser": "^8.36.0",
+    "commitizen": "^4.3.1",
+    "cz-conventional-changelog": "^3.3.0",
+    "eslint": "^9.30.1",
+    "eslint-config-prettier": "^10.1.5",
+    "eslint-plugin-prettier": "^5.5.1",
+    "eslint-config-standard": "^17.1.0",
+    "eslint-plugin-import": "^2.31.0",
+    "eslint-plugin-n": "^17.17.0",
+    "eslint-plugin-promise": "^7.2.1",
+    "eslint-plugin-simple-import-sort": "^12.1.1",
+    "husky": "^9.1.7",
+    "prettier": "^3.6.2",
+    "semantic-release": "^24.2.6",
+    "semantic-release-unsquash": "^0.3.0",
+    "typescript": "^5.8.3"
+  },
+  "dependencies": {
+    "@mysten/sui": "^1.37.1"
+  },
+  "config": {
+    "commitizen": {
+      "path": "./node_modules/cz-conventional-changelog"
+    }
+  },
+  "engines": {
+    "node": ">=20.0.0",
+    "npm": ">=10.0.0"
+  },
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org/",
+    "provenance": true
+  }
+}

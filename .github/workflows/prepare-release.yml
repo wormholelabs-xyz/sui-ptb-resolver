@@ -1,0 +1,90 @@
+name: Prepare Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      commit_sha:
+        description: "Commit SHA from main branch to release (leave empty for latest main)"
+        required: false
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  prepare-release:
+    name: Prepare Release Branch
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Validate workflow trigger
+        run: |
+          echo "🔒 Security Check: Validating workflow trigger"
+          if [[ "${{ github.event_name }}" != "workflow_dispatch" ]]; then
+            echo "❌ Only manual workflow dispatch allowed"
+            exit 1
+          fi
+
+      - name: Determine Source Commit
+        id: determine-commit
+        run: |
+          COMMIT_SHA="${{ github.event.inputs.commit_sha }}"
+
+          if [[ -n "$COMMIT_SHA" ]]; then
+            echo "🎯 Using specified commit: $COMMIT_SHA"
+            # Verify the commit exists
+            if ! git rev-parse --verify "$COMMIT_SHA" >/dev/null 2>&1; then
+              echo "❌ Commit '$COMMIT_SHA' not found"
+              exit 1
+            fi
+            SOURCE_COMMIT="$COMMIT_SHA"
+          else
+            echo "🔍 Using latest commit from main"
+            git fetch origin main
+            SOURCE_COMMIT=$(git rev-parse origin/main)
+          fi
+
+          echo "source_commit=$SOURCE_COMMIT" >> $GITHUB_OUTPUT
+          echo "✅ Source commit: $SOURCE_COMMIT"
+
+      - name: Create/Update Release Branch
+        run: |
+          SOURCE_COMMIT="${{ steps.determine-commit.outputs.source_commit }}"
+
+          # Check if release branch exists
+          if git ls-remote --heads origin release >/dev/null 2>&1; then
+            echo "🔄 Release branch exists, updating it"
+            git checkout release
+            git reset --hard "$SOURCE_COMMIT"
+          else
+            echo "🌿 Creating new release branch"
+            git checkout -b release "$SOURCE_COMMIT"
+          fi
+
+          # Force push to update release branch
+          git push origin release --force
+          echo "✅ Release branch updated with commit $SOURCE_COMMIT"
+
+      - name: Create Summary
+        run: |
+          SOURCE_COMMIT="${{ steps.determine-commit.outputs.source_commit }}"
+
+          cat >> $GITHUB_STEP_SUMMARY << EOF
+          ## 🎉 Release Branch Prepared
+
+          ### Summary
+          - **Source Commit**: \`$SOURCE_COMMIT\`
+          - **Release Branch**: Updated/Created \`release\` branch
+          - **Next Step**: The release workflow will automatically trigger
+
+          ### What Happens Next
+          1. 🚀 **Automatic**: Release workflow triggers on push to release branch
+          2. 🔒 **Manual**: 2 approvals required in production environment
+          3. 📦 **Release**: After approval, semantic-release creates version, changelog, and publishes to npm
+          4. 📝 **PR**: Changelog automatically merged back to main
+
+          EOF

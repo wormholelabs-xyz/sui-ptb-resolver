@@ -1,0 +1,22 @@
+# CODEOWNERS for @wormholelabs/dev-config
+# This file defines who needs to review changes to specific files
+# It's a critical security control for our release automation
+
+# Default owners for everything
+* @wormholelabs-xyz/wormhole-labs
+
+# GitHub Actions workflows require special review
+# These files control our CI/CD and release processes
+.github/workflows/* @wormholelabs-xyz/frontend-release-team 
+
+# Package files that affect versioning and dependencies
+package.json @wormholelabs-xyz/wormhole-labs
+pnpm-lock.yaml @wormholelabs-xyz/wormhole-labs
+
+# Security-sensitive configurations
+CODEOWNERS @wormholelabs-xyz/core
+.npmrc @wormholelabs-xyz/core
+.npmignore @wormholelabs-xyz/core
+
+# Release configuration  
+.releaserc.json @wormholelabs-xyz/core

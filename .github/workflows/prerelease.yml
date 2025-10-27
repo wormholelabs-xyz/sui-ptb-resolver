@@ -1,0 +1,121 @@
+name: Pre-release
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  issues: write
+  pull-requests: write
+  id-token: write
+
+jobs:
+  security-check:
+    name: Security Validation
+    runs-on: ubuntu-latest
+    steps:
+      - name: Validate workflow trigger
+        run: |
+          echo "🔒 Security Check: Validating workflow trigger"
+          ALLOWED_EVENTS="push workflow_dispatch"
+          if [[ ! "$ALLOWED_EVENTS" =~ "${{ github.event_name }}" ]]; then
+            echo "❌ Unauthorized workflow trigger: ${{ github.event_name }}"
+            exit 1
+          fi
+
+      - name: Validate branch
+        run: |
+          # For push events, must be main branch
+          if [[ "${{ github.event_name }}" == "push" ]] && [[ "${{ github.ref }}" != "refs/heads/main" ]]; then
+            echo "❌ Push events only allowed from main branch"
+            exit 1
+          fi
+
+          # For workflow_dispatch, only allow hotfix/* branches
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            if [[ ! "${{ github.ref }}" =~ ^refs/heads/hotfix/.+ ]]; then
+              echo "❌ Manual dispatch only allowed from hotfix/* branches"
+              exit 1
+            fi
+          fi
+
+          echo "✅ Branch validation passed for: ${{ github.ref }}"
+
+      - name: Create audit log
+        run: |
+          mkdir -p audit-logs
+          cat > audit-logs/prerelease-$(date +%Y%m%d-%H%M%S).json << EOF
+          {
+            "timestamp": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
+            "actor": "${{ github.actor }}",
+            "event": "${{ github.event_name }}",
+            "branch": "${{ github.ref }}",
+            "commit": "${{ github.sha }}",
+            "workflow": "${{ github.workflow }}",
+            "run_id": "${{ github.run_id }}"
+          }
+          EOF
+
+      - name: Upload audit log
+        uses: actions/upload-artifact@v4
+        with:
+          name: prerelease-audit-${{ github.run_id }}
+          path: audit-logs/
+          retention-days: 90
+
+  prerelease:
+    needs: security-check
+    name: Create Pre-release
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10
+          run_install: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "lts/*"
+          registry-url: "https://registry.npmjs.org"
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build package
+        run: pnpm build
+
+      - name: Audit signatures
+        run: npm audit signatures
+
+      - name: Setup hotfix prerelease config
+        if: ${{ github.event_name == 'workflow_dispatch' && startsWith(github.ref, 'refs/heads/hotfix/') }}
+        run: |
+          echo "📝 Setting up prerelease configuration for hotfix branch"
+          cp .github/configs/releaserc.prerelease.json .releaserc.json
+          echo "✅ Prerelease config applied for hotfix branch"
+
+      - name: Create Pre-release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          NPM_CONFIG_PROVENANCE: true
+        run: |
+          # Run semantic-release
+          npx semantic-release
+
+      - name: Security Audit
+        run: |
+          echo "📝 Pre-release Audit Log"
+          echo "======================="
+          echo "Released by: ${{ github.actor }}"
+          echo "Release Time: $(date -u)"
+          echo "Commit SHA: ${{ github.sha }}"
+          echo "Branch: ${{ github.ref }}"
