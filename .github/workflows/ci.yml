@@ -94,6 +94,21 @@ jobs:
       - name: Analyze commits
         id: analyze
         run: |
+          # Check if commits will trigger a release
+          # semantic-release only releases on: fix, feat, BREAKING CHANGE
+          # It skips: refactor, chore, docs, style, test, ci, build, perf, revert
+          COMMITS=$(git log origin/main..HEAD --pretty=format:"%s%n%b")
+
+          HAS_RELEASABLE_CHANGES=false
+          if echo "$COMMITS" | grep -qE "^(fix|feat)(\(.*\))?:|BREAKING CHANGE:"; then
+            HAS_RELEASABLE_CHANGES=true
+            echo "✅ Found releasable commits (fix, feat, or BREAKING CHANGE)"
+          else
+            echo "⚠️  No releasable commits found - only refactor, chore, docs, etc."
+            echo "⚠️  semantic-release will skip this release"
+          fi
+          echo "has_releasable_changes=$HAS_RELEASABLE_CHANGES" >> $GITHUB_OUTPUT
+
           # Get the recommended bump based on commits since main
           # Using npx to ensure compatibility with npm registry operations
           BUMP=$(npx conventional-recommended-bump -p angular)
@@ -115,19 +130,25 @@ jobs:
           echo "current_version=$CURRENT_VERSION" >> $GITHUB_OUTPUT
 
           # Calculate next version
-          # semantic-release never uses 0.x.x versions, it always starts at 1.0.0
-          # If current version starts with 0., treat it as pre-1.0.0 and bump to 1.0.0
-          if [[ "$CURRENT_VERSION" =~ ^0\. ]]; then
-            # Any 0.x.x version should become 1.0.0
-            NEXT_VERSION="1.0.0"
-            echo "Pre-1.0.0 version detected ($CURRENT_VERSION), next version will be 1.0.0"
-          elif [[ "$BUMP" == "major" ]]; then
-            NEXT_VERSION=$(echo $CURRENT_VERSION | awk -F. '{print $1+1".0.0"}')
-          elif [[ "$BUMP" == "minor" ]]; then
-            NEXT_VERSION=$(echo $CURRENT_VERSION | awk -F. '{print $1"."$2+1".0"}')
-          elif [[ "$BUMP" == "patch" ]]; then
-            NEXT_VERSION=$(echo $CURRENT_VERSION | awk -F. '{print $1"."$2"."$3+1}')
+          # Only calculate version if there are releasable changes
+          if [[ "$HAS_RELEASABLE_CHANGES" == "true" ]]; then
+            # semantic-release never uses 0.x.x versions, it always starts at 1.0.0
+            # If current version starts with 0., treat it as pre-1.0.0 and bump to 1.0.0
+            if [[ "$CURRENT_VERSION" =~ ^0\. ]]; then
+              # Any 0.x.x version should become 1.0.0
+              NEXT_VERSION="1.0.0"
+              echo "Pre-1.0.0 version detected ($CURRENT_VERSION), next version will be 1.0.0"
+            elif [[ "$BUMP" == "major" ]]; then
+              NEXT_VERSION=$(echo $CURRENT_VERSION | awk -F. '{print $1+1".0.0"}')
+            elif [[ "$BUMP" == "minor" ]]; then
+              NEXT_VERSION=$(echo $CURRENT_VERSION | awk -F. '{print $1"."$2+1".0"}')
+            elif [[ "$BUMP" == "patch" ]]; then
+              NEXT_VERSION=$(echo $CURRENT_VERSION | awk -F. '{print $1"."$2"."$3+1}')
+            else
+              NEXT_VERSION=""
+            fi
           else
+            # No releasable changes, no version will be released
             NEXT_VERSION=""
           fi
 
@@ -191,9 +212,19 @@ jobs:
             echo "" >> release-preview.md
             cat CHANGELOG_PREVIEW.md >> release-preview.md
           else
-            echo "🔍 **No release would be created**" >> release-preview.md
+            echo "🔍 **No pre-release will be created**" >> release-preview.md
             echo "" >> release-preview.md
-            echo "No significant changes detected that would trigger a release." >> release-preview.md
+            if [[ "${{ steps.analyze.outputs.has_releasable_changes }}" == "false" ]]; then
+              echo "This PR only contains commits with types that don't trigger releases:" >> release-preview.md
+              echo "- \`refactor:\`, \`chore:\`, \`docs:\`, \`style:\`, \`test:\`, \`ci:\`, \`build:\`, \`perf:\`, \`revert:\`" >> release-preview.md
+              echo "" >> release-preview.md
+              echo "To trigger a release, use commit types:" >> release-preview.md
+              echo "- \`fix:\` for bug fixes (patch release)" >> release-preview.md
+              echo "- \`feat:\` for new features (minor release)" >> release-preview.md
+              echo "- \`BREAKING CHANGE:\` in commit body (major release)" >> release-preview.md
+            else
+              echo "No significant changes detected that would trigger a release." >> release-preview.md
+            fi
           fi
 
           echo "" >> release-preview.md
