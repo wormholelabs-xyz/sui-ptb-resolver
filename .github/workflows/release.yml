@@ -193,6 +193,9 @@ jobs:
             echo "Setting new_release_published=false"
           fi
 
+          # Exit with semantic-release's exit code to fail the workflow if it failed
+          exit $EXIT_CODE
+
       - name: Commit changelog to release branch
         if: steps.release.outputs.new_release_published == 'true' && github.ref == 'refs/heads/release'
         env:
