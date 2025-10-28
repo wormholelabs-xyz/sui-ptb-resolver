@@ -106,7 +106,8 @@ jobs:
           echo "🔐 Using NPM OIDC authentication (no token required)"
 
           # Run semantic-release and capture outputs
-          bunx semantic-release > release-output.txt 2>&1
+          # Using npx to ensure compatibility with npm OIDC authentication
+          npx semantic-release > release-output.txt 2>&1
           EXIT_CODE=$?
 
           echo "Semantic-release exit code: $EXIT_CODE"
