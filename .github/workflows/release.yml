@@ -167,7 +167,7 @@ jobs:
           # Run semantic-release and capture outputs
           # Use 'set +e' to prevent script exit on failure so we can capture output
           set +e
-          npx semantic-release > release-output.txt 2>&1
+          bunx semantic-release > release-output.txt 2>&1
           EXIT_CODE=$?
           set -e
 
@@ -192,6 +192,9 @@ jobs:
             echo "new_release_published=false" >> "$GITHUB_OUTPUT"
             echo "Setting new_release_published=false"
           fi
+
+          # Exit with semantic-release's exit code to fail the workflow if it failed
+          exit $EXIT_CODE
 
       - name: Commit changelog to release branch
         if: steps.release.outputs.new_release_published == 'true' && github.ref == 'refs/heads/release'
