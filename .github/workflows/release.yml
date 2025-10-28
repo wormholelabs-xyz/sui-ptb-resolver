@@ -1,9 +1,8 @@
-name: Publish Release
+name: Release
 
 on:
   push:
-    branches:
-      - release
+    branches: [main, release]
   workflow_dispatch:
 
 permissions:
@@ -26,22 +25,41 @@ jobs:
             exit 1
           fi
 
-          # For push events, ensure it's to release branch
-          if [[ "${{ github.event_name }}" == "push" ]] && [[ "${{ github.ref }}" != "refs/heads/release" ]]; then
-            echo "❌ Push events only allowed to release branch"
-            exit 1
+      - name: Validate branch
+        run: |
+          # For push events, only allow main and release branches
+          if [[ "${{ github.event_name }}" == "push" ]]; then
+            if [[ "${{ github.ref }}" != "refs/heads/main" ]] && [[ "${{ github.ref }}" != "refs/heads/release" ]]; then
+              echo "❌ Push events only allowed from main or release branches"
+              exit 1
+            fi
           fi
 
-          # For manual dispatch, ensure we're on release branch
-          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]] && [[ "${{ github.ref }}" != "refs/heads/release" ]]; then
-            echo "❌ Manual dispatch only allowed from release branch"
-            exit 1
+          # For workflow_dispatch, only allow release and hotfix/* branches
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            if [[ "${{ github.ref }}" != "refs/heads/release" ]] && [[ ! "${{ github.ref }}" =~ ^refs/heads/hotfix/.+ ]]; then
+              echo "❌ Manual dispatch only allowed from release or hotfix/* branches"
+              exit 1
+            fi
           fi
+
+          echo "✅ Branch validation passed for: ${{ github.ref }}"
 
       - name: Create audit log
         run: |
           mkdir -p audit-logs
-          cat > audit-logs/attempt-$(date +%Y%m%d-%H%M%S).json << EOF
+
+          # Determine release type
+          RELEASE_TYPE="unknown"
+          if [[ "${{ github.ref }}" == "refs/heads/main" ]]; then
+            RELEASE_TYPE="prerelease"
+          elif [[ "${{ github.ref }}" == "refs/heads/release" ]]; then
+            RELEASE_TYPE="production"
+          elif [[ "${{ github.ref }}" =~ ^refs/heads/hotfix/.+ ]]; then
+            RELEASE_TYPE="hotfix"
+          fi
+
+          cat > audit-logs/release-$(date +%Y%m%d-%H%M%S).json << EOF
           {
             "timestamp": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
             "actor": "${{ github.actor }}",
@@ -49,7 +67,8 @@ jobs:
             "branch": "${{ github.ref }}",
             "commit": "${{ github.sha }}",
             "workflow": "${{ github.workflow }}",
-            "run_id": "${{ github.run_id }}"
+            "run_id": "${{ github.run_id }}",
+            "release_type": "${RELEASE_TYPE}"
           }
           EOF
 
@@ -60,11 +79,12 @@ jobs:
           path: audit-logs/
           retention-days: 90
 
-  publish-release:
+  publish:
     needs: security-check
-    name: Publish NPM Package
+    name: Publish Release
     runs-on: ubuntu-latest
-    environment: production # Requires 2 approvals
+    # Only require environment approval for production release and hotfix branches
+    environment: ${{ github.ref == 'refs/heads/release' || startsWith(github.ref, 'refs/heads/hotfix/') && 'production' || '' }}
     outputs:
       release_created: ${{ steps.release.outputs.new_release_published }}
       tag_name: ${{ steps.release.outputs.new_release_git_tag }}
@@ -84,7 +104,6 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: "lts/*"
-          registry-url: "https://registry.npmjs.org"
 
       - name: Install dependencies
         run: bun install --frozen-lockfile
@@ -95,18 +114,57 @@ jobs:
       - name: Audit signatures
         run: npm audit signatures
 
-      - name: Create Production Release
+      - name: Pre-publish Security Audit
+        run: |
+          # Determine release type for audit log
+          if [[ "${{ github.ref }}" == "refs/heads/main" ]]; then
+            echo "📝 Pre-release Security Audit"
+            echo "============================="
+            RELEASE_TYPE="Pre-release (Development)"
+          elif [[ "${{ github.ref }}" == "refs/heads/release" ]]; then
+            echo "📝 Production Release Security Audit"
+            echo "===================================="
+            RELEASE_TYPE="Production Release"
+          elif [[ "${{ github.ref }}" =~ ^refs/heads/hotfix/.+ ]]; then
+            echo "🔥 Hotfix Release Security Audit"
+            echo "================================"
+            RELEASE_TYPE="Hotfix"
+          fi
+
+          echo "Release Type: ${RELEASE_TYPE}"
+          echo "Released by: ${{ github.actor }}"
+          echo "Release Time: $(date -u)"
+          echo "Commit SHA: ${{ github.sha }}"
+          echo "Branch: ${{ github.ref }}"
+          echo ""
+          echo "⚠️  Publishing to npm registry will begin after this audit"
+
+      - name: Setup hotfix prerelease config
+        if: startsWith(github.ref, 'refs/heads/hotfix/')
+        run: |
+          echo "📝 Setting up prerelease configuration for hotfix branch"
+          cp .github/configs/releaserc.prerelease.json .releaserc.json
+          echo "✅ Prerelease config applied for hotfix branch"
+
+      - name: Create Release
         id: release
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           NPM_CONFIG_PROVENANCE: true
         run: |
-          echo "🔒 Creating production release after approvals"
-          echo "📦 This will create version, tag, changelog, and publish to npm"
+          # Determine release type for logging
+          if [[ "${{ github.ref }}" == "refs/heads/main" ]]; then
+            echo "📦 Creating prerelease (development)"
+          elif [[ "${{ github.ref }}" == "refs/heads/release" ]]; then
+            echo "🔒 Creating production release after approvals"
+          elif [[ "${{ github.ref }}" =~ ^refs/heads/hotfix/.+ ]]; then
+            echo "🔥 Creating hotfix release after approvals"
+          fi
+
+          echo "📦 Running semantic-release"
           echo "🔐 Using NPM OIDC authentication (no token required)"
 
           # Run semantic-release and capture outputs
-          # Using npx to ensure compatibility with npm OIDC authentication
           npx semantic-release > release-output.txt 2>&1
           EXIT_CODE=$?
 
@@ -114,16 +172,16 @@ jobs:
           echo "Semantic-release output:"
           cat release-output.txt
 
-          # Always set the output for debugging
+          # Set outputs for downstream jobs
           if [ $EXIT_CODE -eq 0 ]; then
             echo "new_release_published=true" >> "$GITHUB_OUTPUT"
             echo "Setting new_release_published=true"
-            
+
             # Get the latest tag created by semantic-release
             git fetch --tags
             LATEST_TAG=$(git describe --tags --abbrev=0)
             VERSION=$(echo $LATEST_TAG | sed 's/^v//')  # Remove 'v' prefix if present
-            
+
             echo "new_release_version=$VERSION" >> "$GITHUB_OUTPUT"
             echo "new_release_git_tag=$LATEST_TAG" >> "$GITHUB_OUTPUT"
             echo "Found release tag: $LATEST_TAG (version: $VERSION)"
@@ -133,7 +191,7 @@ jobs:
           fi
 
       - name: Commit changelog to release branch
-        if: steps.release.outputs.new_release_published == 'true'
+        if: steps.release.outputs.new_release_published == 'true' && github.ref == 'refs/heads/release'
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
@@ -146,34 +204,34 @@ jobs:
           if [ -f CHANGELOG.md ]; then
             # Get file content (base64 encoded)
             CONTENT=$(base64 -w 0 CHANGELOG.md)
-            
+
             # Create conventional commit message
             COMMIT_MESSAGE="chore(release): update changelog for v${VERSION}"
-            
+
             echo "Attempting to commit changelog to $BRANCH_NAME branch..."
-            
+
             # Get the SHA of the existing file using git
             echo "Getting SHA for existing CHANGELOG.md on $BRANCH_NAME branch..."
-            
-            # Use git to get the file's SHA from the branch (same as verified-git-commit plugin)
+
+            # Use git to get the file's SHA from the branch
             SHA=$(git rev-parse $BRANCH_NAME:CHANGELOG.md)
-            
+
             echo "Found existing file SHA: $SHA"
-            
+
             # Update the existing file with the new content using GitHub API
             gh api --method PUT repos/:owner/:repo/contents/CHANGELOG.md \
               --field message="$COMMIT_MESSAGE" \
               --field content="$CONTENT" \
               --field branch="$BRANCH_NAME" \
               --field sha="$SHA"
-            
+
             echo "✅ Updated CHANGELOG.md on ${BRANCH_NAME} branch via API (GPG signed)"
           else
             echo "⚠️ No CHANGELOG.md found to commit"
           fi
 
       - name: Create PR to merge changelog to main
-        if: steps.release.outputs.new_release_published == 'true'
+        if: steps.release.outputs.new_release_published == 'true' && github.ref == 'refs/heads/release'
         env:
           GH_TOKEN: ${{ secrets.RELEASE_PAT }}
         run: |
@@ -208,27 +266,22 @@ jobs:
           && echo "✅ PR created successfully" \
           || echo "⚠️ Failed to create PR - it may already exist"
 
-  security-audit:
-    name: Post-Release Security Audit
-    needs: [publish-release]
-    if: always() && needs.publish-release.outputs.release_created == 'true'
+  verify-publish:
+    name: Verify Package Published
+    needs: [publish]
+    if: always() && needs.publish.outputs.release_created == 'true' && github.ref != 'refs/heads/main'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-        with:
-          ref: ${{ needs.publish-release.outputs.tag_name }}
-
-      - name: Audit Release
-        run: |
-          echo "📝 Stable Release Audit Log"
-          echo "=============================="
-          echo "Release Tag: ${{ needs.publish-release.outputs.tag_name }}"
-          echo "Version: ${{ needs.publish-release.outputs.version }}"
-          echo "Released by: ${{ github.actor }}"
-          echo "Release Time: $(date -u)"
-          echo "Commit SHA: ${{ github.sha }}"
-
       - name: Verify NPM Package
         run: |
+          echo "✅ Verifying package was published to npm registry..."
+          echo "Package: @wormhole-labs/sui-ptb-resolver"
+          echo "Version: ${{ needs.publish.outputs.version }}"
+          echo "Tag: ${{ needs.publish.outputs.tag_name }}"
+          echo ""
+
           sleep 30
-          npm view @wormhole-labs/dev-config@${{ needs.publish-release.outputs.version }} version
+          npm view @wormhole-labs/sui-ptb-resolver@${{ needs.publish.outputs.version }} version
+
+          echo ""
+          echo "✅ Package successfully verified on npm registry"
