@@ -95,7 +95,8 @@ jobs:
         id: analyze
         run: |
           # Get the recommended bump based on commits since main
-          BUMP=$(bunx conventional-recommended-bump -p angular)
+          # Using npx to ensure compatibility with npm registry operations
+          BUMP=$(npx conventional-recommended-bump -p angular)
           echo "bump=$BUMP" >> $GITHUB_OUTPUT
 
           # Get all relevant tag information in one pass
@@ -150,10 +151,12 @@ jobs:
           if [[ -n "$LATEST_TAG" ]]; then
             echo "Generating changelog since tag: $LATEST_TAG"
             # Generate changelog since the last tag
-            bunx conventional-changelog -p angular --commit-path . --tag-prefix "v" --pkg '{"version":"'$LATEST_TAG'"}' | tail -n +2 > CHANGELOG_PREVIEW.md || echo "No changes" > CHANGELOG_PREVIEW.md
+            # Using npx to ensure compatibility with npm registry operations
+            npx conventional-changelog -p angular --commit-path . --tag-prefix "v" --pkg '{"version":"'$LATEST_TAG'"}' | tail -n +2 > CHANGELOG_PREVIEW.md || echo "No changes" > CHANGELOG_PREVIEW.md
           else
             echo "No tags found, generating full changelog"
-            bunx conventional-changelog -p angular -r 0 -u | tail -n +2 > CHANGELOG_PREVIEW.md || echo "No changes" > CHANGELOG_PREVIEW.md
+            # Using npx to ensure compatibility with npm registry operations
+            npx conventional-changelog -p angular -r 0 -u | tail -n +2 > CHANGELOG_PREVIEW.md || echo "No changes" > CHANGELOG_PREVIEW.md
           fi
 
           # If the file is empty or just has headers, generate from git log since last tag

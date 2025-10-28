@@ -24,7 +24,7 @@
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "validate": "bun run lint && bun run format:check",
-    "test:release": "GH_TOKEN=$(gh auth token) bunx semantic-release --dry-run"
+    "test:release": "GH_TOKEN=$(gh auth token) npx semantic-release --dry-run"
   },
   "keywords": [
     "wormhole",
@@ -56,7 +56,7 @@
     "@commitlint/config-conventional": "^19.8.1",
     "@eslint/js": "^9.30.1",
     "@semantic-release/changelog": "^6.0.3",
-    "@semantic-release/github": "^11.0.3",
+    "@semantic-release/github": "^12.0.0",
     "@semantic-release/npm": "^13.1.1",
     "@types/node": "^22.10.5",
     "@typescript-eslint/eslint-plugin": "^8.36.0",

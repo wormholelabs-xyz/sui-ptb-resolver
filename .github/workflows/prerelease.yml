@@ -108,7 +108,8 @@ jobs:
         run: |
           # Run semantic-release with OIDC authentication
           # NPM authentication is handled automatically via GitHub OIDC
-          bunx semantic-release
+          # Using npx to ensure compatibility with npm OIDC authentication
+          npx semantic-release
 
       - name: Security Audit
         run: |
