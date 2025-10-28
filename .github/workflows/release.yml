@@ -167,7 +167,7 @@ jobs:
           # Run semantic-release and capture outputs
           # Use 'set +e' to prevent script exit on failure so we can capture output
           set +e
-          npx semantic-release > release-output.txt 2>&1
+          bunx semantic-release > release-output.txt 2>&1
           EXIT_CODE=$?
           set -e
 
