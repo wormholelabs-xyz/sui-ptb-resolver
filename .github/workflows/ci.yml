@@ -108,16 +108,22 @@ jobs:
             CURRENT_VERSION=$(echo $LATEST_STABLE_TAG | sed 's/^v//')
             echo "Found latest stable tag: $LATEST_STABLE_TAG, using version: $CURRENT_VERSION"
           else
-            # No stable tags found, use package.json version
-            CURRENT_VERSION=$(node -p "require('./package.json').version")
-            echo "No stable tags found, using package.json version: $CURRENT_VERSION"
+            # No stable tags found - semantic-release will start at 1.0.0
+            CURRENT_VERSION="0.0.0"
+            echo "No stable tags found, semantic-release will start at 1.0.0"
           fi
           echo "current_version=$CURRENT_VERSION" >> $GITHUB_OUTPUT
 
           # Calculate next version
-          if [[ "$BUMP" == "major" ]]; then
+          # semantic-release never uses 0.x.x versions, it always starts at 1.0.0
+          # If current version starts with 0., treat it as pre-1.0.0 and bump to 1.0.0
+          if [[ "$CURRENT_VERSION" =~ ^0\. ]]; then
+            # Any 0.x.x version should become 1.0.0
+            NEXT_VERSION="1.0.0"
+            echo "Pre-1.0.0 version detected ($CURRENT_VERSION), next version will be 1.0.0"
+          elif [[ "$BUMP" == "major" ]]; then
             NEXT_VERSION=$(echo $CURRENT_VERSION | awk -F. '{print $1+1".0.0"}')
-          elif [[ "$BUMP" == "minor" ]]; then  
+          elif [[ "$BUMP" == "minor" ]]; then
             NEXT_VERSION=$(echo $CURRENT_VERSION | awk -F. '{print $1"."$2+1".0"}')
           elif [[ "$BUMP" == "patch" ]]; then
             NEXT_VERSION=$(echo $CURRENT_VERSION | awk -F. '{print $1"."$2"."$3+1}')
