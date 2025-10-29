@@ -5,7 +5,7 @@ import { getNetworkConfig, SuiPTBResolver } from '../src';
 
 const TOKEN_BRIDGE_CONFIG = {
   mainnet: {
-    stateId: '0xc44404d81c3dde6c469bfb9af4ee7df52939c9a4b54d0f15dc1a3356bea2f69c',
+    stateId: '0xafe6650b1c7e53897ef223e61b95e09501b1ec5472662ff5ea31df4d98d6c8d2',
   },
   testnet: {
     stateId: '',
