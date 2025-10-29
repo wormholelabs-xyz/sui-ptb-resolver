@@ -265,8 +265,8 @@ jobs:
         run: |
           sui move build
           sui move test
-      # - name: Test Wormhole Token Bridge Resolver
-      #   working-directory: wormhole_token_bridge_resolver
-      #   run: |
-      #     sui move build
-      #     sui move test
+      - name: Test Wormhole Token Bridge Resolver
+        working-directory: wormhole_token_bridge_resolver
+        run: |
+          sui move build
+          sui move test
