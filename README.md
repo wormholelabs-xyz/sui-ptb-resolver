@@ -1,226 +1,386 @@
-# @wormhole-labs/dev-config
+# SUI PTB Resolver
 
-Shared development configuration and tooling for Wormhole Labs projects. This
-repository serves as a centralized source for linting, formatting, commit
-conventions, and release automation configurations.
+A comprehensive framework for building **gas-free, offchain-resolved
+Programmable Transaction Blocks (PTBs)** on Sui. This project provides Move
+smart contracts, a TypeScript SDK, and a resolver specification for creating
+dynamic PTBs that discover required data through iterative offchain lookups.
 
-## Overview
+## What is This?
 
-This package provides:
+The SUI PTB Resolver enables construction of complex transactions that require
+onchain data discovery **without any gas costs** until final execution. Instead
+of hardcoding addresses and data, resolvers dynamically discover:
 
-- **Conventional Commits** - Standardized commit message format with validation
-- **CommitLint** - Enforce commit message conventions
-- **Prettier** - Code formatting configuration
-- **ESLint** - Linting configuration for TypeScript/JavaScript
-- **Release Please** - Automated versioning and changelog generation
-- **Husky** - Git hooks for pre-commit and commit-msg validation
-- **GitHub Actions** - CI/CD workflows for automation
+- Package addresses from registries
+- Coin types from token mappings
+- Dynamic field values from objects
+- Table items with structured keys
 
-## Installation
+## Project Components
 
-Install the package in your project:
+### 1. **Move Framework** ([sui_ptb_resolver/](./sui_ptb_resolver/))
+
+Type-safe builder pattern for PTB construction with offchain data discovery.
+
+**Key Features:**
+
+- Builder pattern with CommandResult handles
+- Multiple lookup types (DynamicFieldByType, TableItem, DynamicField,
+  ObjectField)
+- Structured keys for SUI RPC compatibility
+- Semantic key-based data management
+- Automatic type capture for pure inputs
+
+### 2. **Wormhole Token Bridge Resolver** ([wormhole_token_bridge_resolver/](./wormhole_token_bridge_resolver/))
+
+Proof-of-concept implementation showing complete Wormhole VAA redemption flow.
+
+**Demonstrates:**
+
+- Dynamic package and coin type discovery
+- 5-step token redemption flow
+- Direct recipient transfer from VAA
+- Structured key usage for table lookups
+
+### 3. **TypeScript SDK** ([src/](./src/))
+
+Client library for executing the iterative resolution loop.
+
+**Components:**
+
+- `SuiPTBResolver` - Main orchestration
+- `OffchainLookupResolver` - Blockchain data fetching
+- `EventParser` - Move event decoding
+- `PTBBuilder` - Transaction reconstruction
+
+## Resolver Specification
+
+### Required State Structure
+
+All resolvers **must** implement a State struct with these mandatory fields:
+
+```move
+public struct State has key, store {
+    id: UID,
+    package_id: address,      // REQUIRED: Resolver package address
+    module_name: String,      // REQUIRED: Module name for resolve_vaa function
+    // ... add domain-specific fields as needed
+}
+```
+
+**Why Required:**
+
+- `package_id` - Enables SDK to dynamically construct target function
+- `module_name` - Makes SDK completely resolver-agnostic
+- Eliminates hardcoding in client applications
+
+### Required Entry Point Function
+
+All resolvers **must** implement this exact function signature:
+
+```move
+public fun resolve_vaa(
+    resolver_state: &State,
+    vaa_bytes: vector<u8>,
+    discovered_data_bytes: vector<u8>
+) {
+    // Implementation follows standard pattern (see below)
+}
+```
+
+**Parameters:**
+
+- `resolver_state` - Shared State object reference
+- `vaa_bytes` - Input data (VAA or transaction data)
+- `discovered_data_bytes` - BCS-encoded discovered data from previous iterations
+
+### Standard Implementation Pattern
+
+```move
+public fun resolve_vaa(
+    resolver_state: &State,
+    vaa_bytes: vector<u8>,
+    discovered_data_bytes: vector<u8>
+) {
+    // 1. Create builder with discovered data
+    let mut builder = ptb_types::create_ptb_builder(discovered_data_bytes);
+
+    // 2. Request any missing data (returns Option<T>)
+    let package: Option<address> = ptb_types::request_package_lookup(
+        &mut builder,
+        state_object,
+        type_suffix,
+        field_name,
+        semantic_key  // e.g., "core_bridge_package"
+    );
+
+    // 3. Check if discovery is needed
+    if (builder.has_pending_lookups()) {
+        let lookups = builder.get_lookups_for_resolution();
+        let result = ptb_types::create_needs_offchain_result(lookups);
+        ptb_types::emit_resolver_event(&result);
+        return
+    }
+
+    // 4. Build PTB with all discovered data
+    let pkg_addr = *option::borrow(&package);
+    // ... build commands using builder.add_move_call(), etc.
+
+    // 5. Finalize and emit resolved event
+    let groups = ptb_types::finalize_builder(&builder);
+    let result = ptb_types::create_resolved_result(groups);
+    ptb_types::emit_resolver_event(&result);
+}
+```
+
+## Quick Start
+
+### Installation
 
 ```bash
-npm install --save-dev @wormhole-labs/dev-config
+# Clone repository
+git clone <repo-url>
+cd sui-ptb-resolver
+
+# Install TypeScript dependencies
+bun install
+
+# Build Move packages
+sui move build -p sui_ptb_resolver
+sui move build -p wormhole_token_bridge_resolver
+
+# Run tests
+sui move test -p sui_ptb_resolver
+sui move test -p wormhole_token_bridge_resolver
 ```
 
-Or with pnpm:
+### TypeScript Usage
+
+```typescript
+import { SuiPTBResolver } from 'sui-resolver';
+import { SuiClient } from '@mysten/sui/client';
+
+const client = new SuiClient({ url: rpcUrl });
+const resolver = new SuiPTBResolver({ network, maxIterations: 10 }, client);
+
+// Fetch State to get package_id and module_name
+const state = await client.getObject({
+  id: stateId,
+  options: { showContent: true },
+});
+
+const { package_id, module_name } = state.data.content.fields;
+
+// Construct target dynamically
+const target = `${package_id}::${module_name}::resolve_vaa`;
+
+// Resolve VAA
+const result = await resolver.resolveVAA(target, stateId, vaaBytes);
+
+// Execute transaction
+await client.signAndExecuteTransaction({
+  transaction: result.transaction,
+});
+```
+
+## Building a Custom VAA Resolver
+
+### 1. Define State with Required Fields
+
+```move
+module my_resolver::state {
+    use std::string::String;
+
+    public struct State has key, store {
+        id: UID,
+        package_id: address,        // REQUIRED
+        module_name: String,        // REQUIRED
+        // Add domain-specific fields:
+        registry: address,
+        bridge_state: address,
+    }
+
+    public(package) fun new(
+        publisher: &Publisher,
+        package_id: address,
+        module_name: String,
+        registry: address,
+        bridge_state: address,
+        ctx: &mut TxContext
+    ): State {
+        State {
+            id: object::new(ctx),
+            package_id,
+            module_name,
+            registry,
+            bridge_state
+        }
+    }
+
+    // REQUIRED accessors
+    public fun package_id(self: &State): address { self.package_id }
+    public fun module_name(self: &State): String { self.module_name }
+
+    // Domain-specific accessors
+    public fun registry(self: &State): address { self.registry }
+    public fun bridge_state(self: &State): address { self.bridge_state }
+}
+```
+
+### 2. Implement resolve_vaa Function
+
+```move
+module my_resolver::resolver {
+    use sui_ptb_resolver::ptb_types;
+    use my_resolver::state::{Self, State};
+
+    // REQUIRED function signature
+    public fun resolve_vaa(
+        resolver_state: &State,
+        vaa_bytes: vector<u8>,
+        discovered_data_bytes: vector<u8>
+    ) {
+        let mut builder = ptb_types::create_ptb_builder(discovered_data_bytes);
+
+        // Request data discovery
+        let package: Option<address> = ptb_types::request_package_lookup(
+            &mut builder,
+            state::registry(resolver_state),
+            string::utf8(b"CurrentPackage"),
+            string::utf8(b"package"),
+            string::utf8(b"my_package")  // Semantic key
+        );
+
+        // Check for pending lookups
+        if (builder.has_pending_lookups()) {
+            let lookups = builder.get_lookups_for_resolution();
+            let result = ptb_types::create_needs_offchain_result(lookups);
+            ptb_types::emit_resolver_event(&result);
+            return
+        }
+
+        // Build PTB
+        let pkg = *option::borrow(&package);
+        let input = builder.add_pure_input(vaa_bytes);
+        builder.add_move_call(
+            pkg,
+            string::utf8(b"module"),
+            string::utf8(b"function"),
+            vector::empty(),
+            vector[ptb_types::input_handle_to_argument(&input)]
+        );
+
+        // Finalize
+        let groups = ptb_types::finalize_builder(&builder);
+        let result = ptb_types::create_resolved_result(groups);
+        ptb_types::emit_resolver_event(&result);
+    }
+}
+```
+
+### 3. Create Setup Module
+
+```move
+module my_resolver::setup {
+    use sui::package::Publisher;
+    use my_resolver::state;
+
+    public entry fun create_state(
+        publisher: &Publisher,
+        package_id: address,
+        module_name: vector<u8>,  // Will be "resolver" for resolve_vaa
+        registry: address,
+        bridge_state: address,
+        ctx: &mut TxContext
+    ) {
+        let state = state::new(
+            publisher,
+            package_id,
+            std::string::utf8(module_name),
+            registry,
+            bridge_state,
+            ctx
+        );
+        sui::transfer::public_share_object(state);
+    }
+}
+```
+
+### 4. Deploy and Use
 
 ```bash
-pnpm add -D @wormhole-labs/dev-config
+# Deploy resolver
+sui client publish my_resolver --gas-budget 100000000
+
+# Create State
+sui client call \
+  --package <PACKAGE_ID> \
+  --module setup \
+  --function create_state \
+  --args <PUBLISHER> <PACKAGE_ID> '"resolver"' <REGISTRY> <BRIDGE> \
+  --gas-budget 100000000
 ```
 
-## Quick Setup
+## Key Features
 
-### 1. Conventional Commits & CommitLint
+### Type-Safe Builder Pattern
 
-Create `.commitlintrc.js` in your project root:
+CommandResult handles ensure correct command chaining without string
+placeholders.
 
-```javascript
-export default {
-  extends: ['@wormhole-labs/dev-config/commitlint'],
-};
-```
+### Automatic Type Capture
 
-**Note:** This package uses ES modules for commitlint configuration to ensure
-compatibility with modern tooling and GitHub Actions.
+Pure inputs automatically capture Move type information via `std::type_name`.
 
-### 2. Prettier Configuration
+### Semantic Keys
 
-Create `.prettierrc.js`:
+Human-readable keys like `"core_bridge_package"` instead of numeric indices.
 
-```javascript
-export default {
-  ...require('@wormhole-labs/dev-config/prettier'),
-};
-```
+### Option<T> API
 
-### 3. ESLint Configuration
+Clean API where `request_*` functions return `Option<T>`:
 
-Create `eslint.config.js`:
+- `option::some(value)` when data is discovered
+- `option::none()` when data needs fetching
 
-```javascript
-import wormholeConfig from '@wormhole-labs/dev-config/eslint';
+### Structured Keys
 
-export default [
-  ...wormholeConfig,
-  // Your custom rules here
-];
-```
+RPC-compatible table keys for direct SUI RPC queries without opaque BCS
+encoding.
 
-### 4. Husky Git Hooks
+### Gas-Free Discovery
 
-Set up git hooks by running:
+All data discovery via dry-run execution - no gas costs until final PTB
+execution.
 
-```bash
-npx husky init
-npx husky add .husky/commit-msg 'npx --no -- commitlint --edit $1'
-npx husky add .husky/pre-commit 'npm run lint && npm run format:check'
-```
+## Documentation
 
-## Commit Message Format
-
-We follow the [Conventional Commits](https://www.conventionalcommits.org/)
-specification:
-
-```
-type(scope): description
-
-[optional body]
-
-[optional footer(s)]
-```
-
-### Types
-
-- `feat`: New feature
-- `fix`: Bug fix
-- `docs`: Documentation changes
-- `style`: Code style changes (formatting, missing semicolons, etc)
-- `refactor`: Code changes that neither fix bugs nor add features
-- `perf`: Performance improvements
-- `test`: Adding or updating tests
-- `build`: Changes to build system or dependencies
-- `ci`: CI/CD configuration changes
-- `chore`: Other changes that don't modify src or test files
-- `revert`: Reverts a previous commit
-
-### Examples
-
-```bash
-# Feature
-git commit -m "feat(connect): add Solana wallet support"
-
-# Bug fix
-git commit -m "fix(portal): resolve navigation timeout issue"
-
-# Breaking change
-git commit -m "feat(api)!: change response format
-
-BREAKING CHANGE: API responses now use camelCase instead of snake_case"
-
-# Multiple scopes
-git commit -m "fix(connect,portal): synchronize wallet state"
-```
-
-## Release Automation
-
-This package includes Release Please configuration for automated versioning and
-changelog generation.
-
-### Setting Up Release Please
-
-1. Copy the workflow from this repo's `.github/workflows/release.yml`
-2. Configure your repository secrets:
-   - `RELEASE_TOKEN`: GitHub token with write permissions
-   - `NPM_TOKEN`: NPM automation token (for publishing)
-
-### How It Works
-
-1. PRs with conventional commits trigger Release Please
-2. Release Please creates/updates a PR with version bumps and changelog
-3. Merging the release PR triggers:
-   - GitHub release creation
-   - NPM package publishing (if configured)
-   - Changelog updates
+- **[sui_ptb_resolver README](./sui_ptb_resolver/README.md)** - Complete Move
+  framework documentation
+- **[wormhole_token_bridge_resolver README](./wormhole_token_bridge_resolver/README.md)** -
+  POC implementation details
+- **[Example Code](./examples/token_bridge_resolver_sample.ts)** - TypeScript
+  usage example
 
 ## Security
 
-### Protected Workflows
-
-All release workflows include multiple security layers:
-
-1. **CODEOWNERS** - Workflow changes require maintainer approval
-2. **Protected Environments** - Production deployments need manual approval
-3. **Team Validation** - Only team members can trigger releases
-4. **Audit Logging** - All actions are logged for review
-
-### Setting Up Security
-
-1. Create a `CODEOWNERS` file:
-
-```
-# CODEOWNERS
-.github/workflows/* @wormholelabs-xyz/release-engineers
-package.json @wormholelabs-xyz/maintainers
-```
-
-2. Configure branch protection:
-   - Require pull request reviews
-   - Require status checks to pass
-   - Include administrators
-   - Restrict who can push
-
-3. Set up protected environments in GitHub:
-   - Go to Settings → Environments
-   - Create "production" environment
-   - Add required reviewers
-   - Set deployment timeout
-
-## Development
-
-### Prerequisites
-
-- Node.js >= 18
-- npm >= 9 or pnpm >= 8
-
-### Local Development
-
-```bash
-# Install dependencies
-pnpm install
-
-# Lint code
-pnpm lint
-
-# Format code
-pnpm format
-
-# Validate everything
-pnpm validate
-```
-
-### Testing Configurations
-
-To test configurations in other projects:
-
-```bash
-# Link this package locally
-cd /path/to/dev-config
-npm link
-
-# Use in another project
-cd /path/to/your-project
-npm link @wormhole-labs/dev-config
-```
+- **Package Verification**: Discover packages from trusted state objects only
+- **Input Validation**: Validate all discovered data before use
+- **Replay Protection**: Implement mechanisms like `verify_only_once`
+- **Type Safety**: Builder pattern prevents construction errors at compile time
+- **Recipient Control**: Ensure tokens go to correct recipients (not tx.sender)
 
 ## Contributing
 
-1. Fork the repository
-2. Create a feature branch
-3. Make your changes using conventional commits
-4. Ensure all tests pass
-5. Submit a pull request
+When creating new resolvers:
+
+1. ✅ Implement required State structure with `package_id` and `module_name`
+2. ✅ Use exact `resolve_vaa` function signature
+3. ✅ Follow standard implementation pattern
+4. ✅ Use semantic keys for discovered data
+5. ✅ Provide State accessor functions
+6. ✅ Add comprehensive tests
+7. ✅ Document public API
 
 ## License
 
@@ -232,3 +392,9 @@ bleeding-edge, experimental smart contract runtime. Mistakes happen, and no
 matter how hard you try and whether you pay someone to audit it, it may eat your
 tokens, set your printer on fire or startle your cat. Cryptocurrencies are a
 high-risk investment, no matter how fancy.
+
+## Resources
+
+- [Sui Programmable Transactions](https://docs.sui.io/concepts/transactions/prog-txn-blocks)
+- [Move Language](https://move-language.github.io/move/)
+- [Sui RPC API](https://docs.sui.io/references/sui-api)
