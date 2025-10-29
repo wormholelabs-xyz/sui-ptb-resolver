@@ -1,8 +1,8 @@
 import type { SuiClient } from '@mysten/sui/client';
 
-import { addressToBytes, bytesToAddress, bytesToHex, stringToBytes } from '../bcs/converters';
-import type { OffchainLookup } from '../types';
-import { LookupResolutionError, type OffchainLookupHandler } from './base';
+import { addressToBytes, bytesToAddress, bytesToHex, stringToBytes } from '../bcs/converters.js';
+import type { OffchainLookup } from '../types/index.js';
+import { LookupResolutionError, type OffchainLookupHandler } from './base.js';
 
 /**
  * Handler for DynamicField lookups

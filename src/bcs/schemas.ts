@@ -45,7 +45,8 @@ export const TypeTagBCS = bcs.struct('TypeTag', {
   type_tag: bcs.vector(bcs.u8()),
 });
 
-export const CommandBCS = bcs.enum('Command', {
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export const CommandBCS: any = bcs.enum('Command', {
   MoveCall: bcs.struct('MoveCall', {
     package: bcs.fixedArray(32, bcs.u8()),
     module_name: bcs.string(),
@@ -71,22 +72,26 @@ export const CommandBCS = bcs.enum('Command', {
   }),
 });
 
-export const PTBInstructionBCS = bcs.struct('PTBInstruction', {
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export const PTBInstructionBCS: any = bcs.struct('PTBInstruction', {
   inputs: bcs.vector(InputBCS),
   commands: bcs.vector(CommandBCS),
 });
 
-export const InstructionGroupBCS = bcs.struct('InstructionGroup', {
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export const InstructionGroupBCS: any = bcs.struct('InstructionGroup', {
   instructions: PTBInstructionBCS,
   required_objects: bcs.vector(bcs.fixedArray(32, bcs.u8())),
   required_types: bcs.vector(bcs.string()),
 });
 
-export const InstructionGroupsBCS = bcs.struct('InstructionGroups', {
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export const InstructionGroupsBCS: any = bcs.struct('InstructionGroups', {
   groups: bcs.vector(InstructionGroupBCS),
 });
 
-export const ResolverInstructionsEventBCS = bcs.struct('ResolverInstructionsEvent', {
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export const ResolverInstructionsEventBCS: any = bcs.struct('ResolverInstructionsEvent', {
   inputs: bcs.vector(InputBCS),
   commands: bcs.vector(CommandBCS),
   required_objects: bcs.vector(bcs.fixedArray(32, bcs.u8())),
@@ -125,7 +130,8 @@ export const OffchainLookupBCS = bcs.enum('OffchainLookup', {
   }),
 });
 
-export const ResolverResultBCS = bcs.enum('ResolverResult', {
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export const ResolverResultBCS: any = bcs.enum('ResolverResult', {
   Resolved: bcs.struct('Resolved', {
     instruction_groups: InstructionGroupsBCS,
   }),
