@@ -59,6 +59,9 @@ export default [
       '**/legacy/**',
       '**/legacy-pages/**',
       '**/submodules/**',
+
+      // Examples (not part of strict type checking)
+      '**/examples/**',
     ],
   },
 
@@ -72,6 +75,12 @@ export default [
         sourceType: 'module',
         project: true,
       },
+      globals: {
+        console: 'readonly',
+        Buffer: 'readonly',
+        TextEncoder: 'readonly',
+        TextDecoder: 'readonly',
+      },
     },
     plugins: {
       '@typescript-eslint': typescript,
@@ -80,6 +89,9 @@ export default [
     rules: {
       // Prettier
       'prettier/prettier': 'error',
+
+      // Disable base rule as it conflicts with TypeScript version
+      'no-unused-vars': 'off',
 
       // TypeScript specific rules
       '@typescript-eslint/no-unused-vars': [
@@ -92,7 +104,7 @@ export default [
       '@typescript-eslint/explicit-function-return-type': 'off',
       '@typescript-eslint/explicit-module-boundary-types': 'off',
       '@typescript-eslint/no-explicit-any': 'error',
-      '@typescript-eslint/no-non-null-assertion': 'warn',
+      '@typescript-eslint/no-non-null-assertion': 'off',
       '@typescript-eslint/no-floating-promises': 'error',
       '@typescript-eslint/await-thenable': 'error',
       '@typescript-eslint/no-misused-promises': 'error',
@@ -108,7 +120,7 @@ export default [
       ],
 
       // General rules
-      'no-console': ['warn', { allow: ['warn', 'error'] }],
+      'no-console': ['warn', { allow: ['warn', 'error', 'log'] }],
       'no-debugger': 'error',
       'no-alert': 'error',
       'prefer-const': 'error',
