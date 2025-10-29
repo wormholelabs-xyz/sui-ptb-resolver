@@ -1,0 +1,3 @@
+export const DEFAULT_MAX_ITERATIONS = 10;
+export const DEFAULT_DRY_RUN_TIMEOUT = 30_000;
+export const LOOKUP_KEY_SEPARATOR = 0xff;
