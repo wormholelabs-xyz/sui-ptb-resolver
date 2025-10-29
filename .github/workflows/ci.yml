@@ -253,3 +253,20 @@ jobs:
           issue-number: ${{ github.event.pull_request.number }}
           body: ${{ steps.release-preview.outputs.preview }}
           edit-mode: replace
+
+  sui-test:
+    name: Sui Test
+    runs-on: ubuntu-latest
+    container: mysten/sui-tools:mainnet-v1.57.3@sha256:2ec8e8abdf73ab158df4a82406f448d69ade64303d4b30669d2fdec263f9be5f
+    steps:
+      - uses: actions/checkout@v4
+      - name: Test Sui PTB Resolver
+        working-directory: sui_ptb_resolver
+        run: |
+          sui move build
+          sui move test
+      # - name: Test Wormhole Token Bridge Resolver
+      #   working-directory: wormhole_token_bridge_resolver
+      #   run: |
+      #     sui move build
+      #     sui move test
