@@ -141,8 +141,20 @@ export class PTBBuilder {
     const packageAddr = bytesToAddress(fields.package);
     const target = `${packageAddr}::${fields.module_name}::${fields.function_name}`;
 
-    const typeArguments = fields.type_arguments.map((tag) => {
-      return new TextDecoder().decode(tag.type_tag);
+    const typeArguments = fields.type_arguments.map((tag: TypeTag) => {
+      // TypeTag comes from BCS as { type_tag: Uint8Array } but after transformation
+      // it might be in a different format. Handle both cases.
+      let bytes: Uint8Array;
+      if (tag.type_tag) {
+        bytes = tag.type_tag;
+      } else if ((tag as unknown as { fields: Record<string, number> }).fields) {
+        // BCS parsed it with numeric indices - convert to Uint8Array
+        const fields = (tag as unknown as { fields: Record<string, number> }).fields;
+        bytes = new Uint8Array(Object.values(fields));
+      } else {
+        throw new Error('Invalid TypeTag format');
+      }
+      return new TextDecoder().decode(bytes);
     });
 
     const args = fields.arguments.map((arg) => this.resolveArgument(arg));
