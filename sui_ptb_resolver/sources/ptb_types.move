@@ -458,6 +458,16 @@ module sui_ptb_resolver::ptb_types {
         create_input_arg(handle.input_index)
     }
 
+    public fun add_pure_input_raw_bytes(builder: &mut PTBBuilder, raw_bytes: vector<u8>): InputHandle {
+        let index = vector::length(&builder.inputs);
+        let input = Input::Pure {
+            data: raw_bytes,  // Use raw bytes directly, no BCS encoding
+            type_name: string::utf8(b"vector<u8>")
+        };
+        vector::push_back(&mut builder.inputs, input);
+        create_input_handle(index)
+    }
+
     // Add input to builder and return handle
     public fun add_pure_input<T: drop>(builder: &mut PTBBuilder, value: T): InputHandle {
         let index = vector::length(&builder.inputs);
