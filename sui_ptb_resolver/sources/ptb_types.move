@@ -902,17 +902,27 @@ module sui_ptb_resolver::ptb_types {
                 if (option::is_some(key_raw)) {
                     vector::append(&mut full_key, *option::borrow(key_raw));
                 } else if (option::is_some(key_structured)) {
-                    // For structured keys, encode them as field1_name + 0xfe + field1_value + 0xff + field2_name + 0xfe + field2_value
+                    // Length-prefixed encoding for structured keys (safe for binary data):
+                    // num_fields (1 byte) + [name_len (1 byte) + name + value_len (2 bytes big-endian) + value]*
                     let fields = option::borrow(key_structured);
+                    let num_fields = vector::length(fields);
+                    vector::push_back(&mut full_key, (num_fields as u8));
+
                     let mut i = 0;
-                    while (i < vector::length(fields)) {
+                    while (i < num_fields) {
                         let field = vector::borrow(fields, i);
+
+                        // Name length (1 byte) + name
+                        let name_len = vector::length(&field.name);
+                        vector::push_back(&mut full_key, (name_len as u8));
                         vector::append(&mut full_key, field.name);
-                        vector::push_back(&mut full_key, 0xfe);
+
+                        // Value length (2 bytes big-endian) + value
+                        let value_len = vector::length(&field.value);
+                        vector::push_back(&mut full_key, ((value_len >> 8) as u8));
+                        vector::push_back(&mut full_key, ((value_len & 0xff) as u8));
                         vector::append(&mut full_key, field.value);
-                        if (i < vector::length(fields) - 1) {
-                            vector::push_back(&mut full_key, 0xff);
-                        };
+
                         i = i + 1;
                     };
                 };
@@ -1365,17 +1375,27 @@ module sui_ptb_resolver::ptb_types {
                 if (option::is_some(key_raw)) {
                     vector::append(&mut full_key, *option::borrow(key_raw));
                 } else if (option::is_some(key_structured)) {
+                    // Length-prefixed encoding for structured keys (safe for binary data):
+                    // num_fields (1 byte) + [name_len (1 byte) + name + value_len (2 bytes big-endian) + value]*
                     let fields = option::borrow(key_structured);
-                    let len = vector::length(fields);
+                    let num_fields = vector::length(fields);
+                    vector::push_back(&mut full_key, (num_fields as u8));
+
                     let mut i = 0;
-                    while (i < len) {
+                    while (i < num_fields) {
                         let field = vector::borrow(fields, i);
+
+                        // Name length (1 byte) + name
+                        let name_len = vector::length(&field.name);
+                        vector::push_back(&mut full_key, (name_len as u8));
                         vector::append(&mut full_key, field.name);
-                        vector::push_back(&mut full_key, 0xfe);
+
+                        // Value length (2 bytes big-endian) + value
+                        let value_len = vector::length(&field.value);
+                        vector::push_back(&mut full_key, ((value_len >> 8) as u8));
+                        vector::push_back(&mut full_key, ((value_len & 0xff) as u8));
                         vector::append(&mut full_key, field.value);
-                        if (i < len - 1) {
-                            vector::push_back(&mut full_key, 0xff);
-                        };
+
                         i = i + 1;
                     };
                 };

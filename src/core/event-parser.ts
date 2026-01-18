@@ -18,7 +18,7 @@ import type {
   ResolverInstructionsEvent,
   ResolverNeedsDataEvent,
 } from '../types/index.js';
-import { findSeparator, splitBytes } from '../utils/index.js';
+import { findSeparator } from '../utils/index.js';
 
 export class EventParser {
   /**
@@ -185,7 +185,8 @@ export class EventParser {
    *
    * The lookup_key format depends on the lookup type:
    * - DynamicFieldByType: type_suffix + 0xff + extract_field
-   * - TableItem: table_path + 0xff + key
+   * - TableItem (raw key): table_path + 0xff + raw_key
+   * - TableItem (structured key): table_path + 0xff + num_fields(1) + [name_len(1) + name + value_len(2) + value]*
    * - DynamicField: raw key bytes
    * - ObjectField: field_path bytes
    * - DynamicObjectField: raw key bytes
@@ -206,73 +207,60 @@ export class EventParser {
     const separatorIndex = findSeparator(lookupKey, LOOKUP_KEY_SEPARATOR);
 
     if (separatorIndex !== -1) {
-      // Split at separator
-      const parts = splitBytes(lookupKey, LOOKUP_KEY_SEPARATOR);
-
-      const part1 = parts[0]!;
+      const part1 = lookupKey.slice(0, separatorIndex);
       const part1Str = new TextDecoder('utf-8', { fatal: false }).decode(part1);
+      const afterSeparator = lookupKey.slice(separatorIndex + 1);
 
-      // Format: table_path + 0xff + field1_name + 0xfe + field1_value + 0xff + field2_name + 0xfe + field2_value
-      if (part1Str.includes('.') && parts.length > 2) {
+      if (part1Str.includes('.')) {
         const tablePath = part1Str;
-        const structuredFields: Array<{ name: Uint8Array; value: Uint8Array }> = [];
 
-        for (let i = 1; i < parts.length; i++) {
-          const fieldPart = parts[i]!;
-          // Split by 0xfe to get name and value
-          const fieldSeparatorIndex = fieldPart.indexOf(0xfe);
-          if (fieldSeparatorIndex !== -1) {
-            const name = fieldPart.slice(0, fieldSeparatorIndex);
-            const value = fieldPart.slice(fieldSeparatorIndex + 1);
-            structuredFields.push({ name, value });
+        // Check if this is length-prefixed structured key format
+        // Format: num_fields(1) + [name_len(1) + name + value_len(2 big-endian) + value]*
+        if (afterSeparator.length > 0) {
+          const numFields = afterSeparator[0]!;
+
+          if (numFields >= 1 && numFields <= 10) {
+            const structuredFields = this.tryParseLengthPrefixedFields(afterSeparator);
+            if (structuredFields !== null) {
+              return {
+                variant: 'TableItem',
+                fields: {
+                  parent_object: parentObject,
+                  table_path: tablePath,
+                  key_raw: null,
+                  key_structured: structuredFields,
+                  key_type: keyType,
+                  placeholder_name: placeholderName,
+                },
+              };
+            }
           }
         }
 
+        // Fall back to raw key format: table_path + 0xff + raw_key
         return {
           variant: 'TableItem',
           fields: {
             parent_object: parentObject,
-            table_path: tablePath,
-            key_raw: null,
-            key_structured: structuredFields,
+            table_path: part1Str,
+            key_raw: afterSeparator,
+            key_structured: null,
             key_type: keyType,
             placeholder_name: placeholderName,
           },
         };
-      } else if (parts.length === 2) {
-        // Legacy format with 2 parts
-        const part2 = parts[1]!;
-        const part2Str = new TextDecoder('utf-8', { fatal: false }).decode(part2);
-
-        if (part1Str.includes('.')) {
-          // Legacy TableItem: table_path + 0xff + raw_key
-          return {
-            variant: 'TableItem',
-            fields: {
-              parent_object: parentObject,
-              table_path: part1Str,
-              key_raw: part2,
-              key_structured: null,
-              key_type: keyType,
-              placeholder_name: placeholderName,
-            },
-          };
-        } else {
-          // DynamicFieldByType: type_suffix + 0xff + extract_field
-          return {
-            variant: 'DynamicFieldByType',
-            fields: {
-              parent_object: parentObject,
-              type_suffix: part1Str,
-              extract_field: part2Str,
-              placeholder_name: placeholderName,
-            },
-          };
-        }
       } else {
-        throw new Error(
-          `Invalid lookup_key format: unexpected structure with ${parts.length} parts`
-        );
+        // DynamicFieldByType: type_suffix + 0xff + extract_field
+        const part2Str = new TextDecoder('utf-8', { fatal: false }).decode(afterSeparator);
+        return {
+          variant: 'DynamicFieldByType',
+          fields: {
+            parent_object: parentObject,
+            type_suffix: part1Str,
+            extract_field: part2Str,
+            placeholder_name: placeholderName,
+          },
+        };
       }
     }
 
@@ -313,5 +301,59 @@ export class EventParser {
     }
 
     throw new Error(`Invalid address format: ${typeof address}`);
+  }
+
+  /**
+   * Try to parse length-prefixed structured key fields
+   *
+   * Format: num_fields(1 byte) + [name_len(1 byte) + name + value_len(2 bytes big-endian) + value]*
+   *
+   * @param data - Byte array starting with num_fields
+   * @returns Array of {name, value} pairs or null if parsing fails
+   */
+  private tryParseLengthPrefixedFields(
+    data: Uint8Array
+  ): Array<{ name: Uint8Array; value: Uint8Array }> | null {
+    if (data.length < 1) {
+      return null;
+    }
+
+    const numFields = data[0]!;
+    const fields: Array<{ name: Uint8Array; value: Uint8Array }> = [];
+    let offset = 1;
+
+    for (let i = 0; i < numFields; i++) {
+      if (offset >= data.length) {
+        return null;
+      }
+      const nameLen = data[offset]!;
+      offset += 1;
+
+      if (offset + nameLen > data.length) {
+        return null;
+      }
+      const name = data.slice(offset, offset + nameLen);
+      offset += nameLen;
+
+      if (offset + 2 > data.length) {
+        return null;
+      }
+      const valueLen = (data[offset]! << 8) | data[offset + 1]!;
+      offset += 2;
+
+      if (offset + valueLen > data.length) {
+        return null;
+      }
+      const value = data.slice(offset, offset + valueLen);
+      offset += valueLen;
+
+      fields.push({ name, value });
+    }
+
+    if (offset !== data.length) {
+      return null;
+    }
+
+    return fields;
   }
 }
