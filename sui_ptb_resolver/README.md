@@ -573,14 +573,24 @@ let key_type = string::utf8(b"0x26efee...::token_registry::CoinTypeKey");
 
 ### Event Encoding
 
-Structured keys are encoded in events using separators:
-
-- `0xff` - Separates table_path, fields, and field pairs
-- `0xfe` - Separates field name from value within each field
+Structured keys are encoded in events using a length-prefixed format that safely
+handles arbitrary binary data (including values containing 0xff bytes):
 
 ```
-table_path + 0xff + field1_name + 0xfe + field1_value + 0xff + field2_name + 0xfe + field2_value
+table_path + 0xff + num_fields(1 byte) + [name_len(1 byte) + name + value_len(2 bytes big-endian) + value]*
 ```
+
+- `table_path` - UTF-8 string like "token_registry.coin_types"
+- `0xff` - Single separator between table path and structured key data
+- `num_fields` - 1 byte indicating number of fields (1-255)
+- For each field:
+  - `name_len` - 1 byte for field name length (max 255 bytes)
+  - `name` - Field name bytes (e.g., "addr", "chain")
+  - `value_len` - 2 bytes big-endian for value length (max 65535 bytes)
+  - `value` - Field value bytes (BCS-encoded or raw, depending on type)
+
+This format ensures binary values (like 32-byte addresses) are transmitted
+correctly even when they contain 0xff bytes.
 
 TypeScript SDK decodes this automatically when parsing events.
 
