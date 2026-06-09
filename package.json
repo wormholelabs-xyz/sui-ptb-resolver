@@ -15,8 +15,8 @@
     "./package.json": "./package.json"
   },
   "scripts": {
-    "build:resolver": "sui move build -p wormhole_token_bridge_resolver",
-    "test:resolver": "sui move test -p wormhole_token_bridge_resolver",
+    "build:resolver": "sui move build -p sui_ptb_resolver",
+    "test:resolver": "sui move test -p sui_ptb_resolver",
     "example:token-bridge": "bun examples/token_bridge_resolver_sample.ts",
     "prepare": "husky",
     "build": "bun build src/index.ts --outdir dist && tsc --emitDeclarationOnly --outDir dist",

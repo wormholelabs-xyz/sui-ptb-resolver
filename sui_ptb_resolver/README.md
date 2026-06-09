@@ -776,5 +776,6 @@ Contributions are welcome! Please ensure:
 
 - [Sui Programmable Transactions](https://docs.sui.io/concepts/transactions/prog-txn-blocks)
 - [Move Language Documentation](https://move-language.github.io/move/)
-- [Wormhole Integration Example](../wormhole_token_bridge_resolver/)
+- [Wormhole Integration Example](https://github.com/wormholelabs-xyz/example-permissionless-token-bridge-executor-shim)
+  (`sui/token_bridge_ptb_resolver`)
 - [Main Project README](../README.md)
