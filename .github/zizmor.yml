@@ -1,0 +1,16 @@
+# zizmor configuration — https://docs.zizmor.sh/configuration/
+rules:
+  cache-poisoning:
+    # release.yml's Setup Node.js step passes no `cache:` input, so setup-node
+    # does not enable actions/cache and the cache-poisoning vector does not apply.
+    # Node is only present for `npm audit signatures` and the npm publish/verify
+    # (dependencies install via Bun). False positive (Low confidence).
+    ignore:
+      - release.yml
+  superfluous-actions:
+    # ci.yml's release-preview uses peter-evans/find-comment + create-or-update-comment
+    # to find-and-edit a single PR comment by body text. `gh pr comment` is suggested
+    # but only does --edit-last; the action is pinned to a full commit SHA. Keeping it
+    # intentionally. help-level suggestion, not a security finding.
+    ignore:
+      - ci.yml

@@ -15,24 +15,31 @@ jobs:
   prepare-release:
     name: Prepare Release Branch
     runs-on: ubuntu-latest
+    env:
+      GH_EVENT_NAME: ${{ github.event_name }}
     steps:
-      - uses: actions/checkout@v4
+      # persist-credentials is intentionally kept: this job force-pushes the
+      # `release` branch below and needs the checkout token to do so.
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
           fetch-depth: 0
           token: ${{ secrets.GITHUB_TOKEN }}
+          persist-credentials: true
 
       - name: Validate workflow trigger
         run: |
           echo "🔒 Security Check: Validating workflow trigger"
-          if [[ "${{ github.event_name }}" != "workflow_dispatch" ]]; then
+          if [[ "$GH_EVENT_NAME" != "workflow_dispatch" ]]; then
             echo "❌ Only manual workflow dispatch allowed"
             exit 1
           fi
 
       - name: Determine Source Commit
         id: determine-commit
+        env:
+          INPUT_COMMIT_SHA: ${{ github.event.inputs.commit_sha }}
         run: |
-          COMMIT_SHA="${{ github.event.inputs.commit_sha }}"
+          COMMIT_SHA="$INPUT_COMMIT_SHA"
 
           if [[ -n "$COMMIT_SHA" ]]; then
             echo "🎯 Using specified commit: $COMMIT_SHA"
@@ -52,9 +59,9 @@ jobs:
           echo "✅ Source commit: $SOURCE_COMMIT"
 
       - name: Create/Update Release Branch
+        env:
+          SOURCE_COMMIT: ${{ steps.determine-commit.outputs.source_commit }}
         run: |
-          SOURCE_COMMIT="${{ steps.determine-commit.outputs.source_commit }}"
-
           # Check if release branch exists
           if git ls-remote --heads origin release >/dev/null 2>&1; then
             echo "🔄 Release branch exists, updating it"
@@ -70,10 +77,10 @@ jobs:
           echo "✅ Release branch updated with commit $SOURCE_COMMIT"
 
       - name: Create Summary
+        env:
+          SOURCE_COMMIT: ${{ steps.determine-commit.outputs.source_commit }}
         run: |
-          SOURCE_COMMIT="${{ steps.determine-commit.outputs.source_commit }}"
-
-          cat >> $GITHUB_STEP_SUMMARY << EOF
+          cat >> "$GITHUB_STEP_SUMMARY" << EOF
           ## 🎉 Release Branch Prepared
 
           ### Summary

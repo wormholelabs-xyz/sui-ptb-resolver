@@ -6,10 +6,9 @@ on:
   pull_request:
     branches: [main]
 
+# Least-privilege default; jobs opt into the extra scopes they need.
 permissions:
   contents: read
-  pull-requests: write
-  security-events: write
 
 jobs:
   lint-commits:
@@ -17,12 +16,13 @@ jobs:
     runs-on: ubuntu-latest
     if: github.event_name == 'pull_request'
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
           fetch-depth: 0
+          persist-credentials: false
 
       - name: Validate commits
-        uses: wagoid/commitlint-github-action@v6
+        uses: wagoid/commitlint-github-action@b948419dd99f3fd78a6548d48f94e3df7f6bf3ed # v6
         with:
           configFile: ./config/commitlint.config.mjs
           helpURL: https://www.conventionalcommits.org/
@@ -32,7 +32,9 @@ jobs:
     name: Lint
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
 
       - name: Setup Bun
         uses: oven-sh/setup-bun@735343b667d3e6f658f44d0eca948eb6282f2b76 # pinning the commit to v2
@@ -51,11 +53,18 @@ jobs:
   security:
     name: Security Check
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write # required to upload SARIF results
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
 
       - name: Run Trivy vulnerability scanner
-        uses: aquasecurity/trivy-action@0.30.0
+        # v0.36.0: patched for GHSA-69fq-xp46-6x23 (supply-chain compromise in <0.35.0)
+        # and SHA-pins its own transitive actions (setup-trivy v0.2.6, actions/cache v5).
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
           scan-type: "fs"
           scan-ref: "."
@@ -64,7 +73,7 @@ jobs:
           severity: "CRITICAL,HIGH"
 
       - name: Upload Trivy scan results
-        uses: github/codeql-action/upload-sarif@v3
+        uses: github/codeql-action/upload-sarif@dd903d2e4f5405488e5ef1422510ee31c8b32357 # v3
         if: always()
         with:
           sarif_file: "trivy-results.sarif"
@@ -73,10 +82,14 @@ jobs:
     name: Release Preview
     runs-on: ubuntu-latest
     if: github.event_name == 'pull_request'
+    permissions:
+      contents: read
+      pull-requests: write # required to post the release-preview PR comment
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
           fetch-depth: 0
+          persist-credentials: false
 
       - name: Setup Bun
         uses: oven-sh/setup-bun@735343b667d3e6f658f44d0eca948eb6282f2b76 # pinning the commit to v2
@@ -199,14 +212,18 @@ jobs:
 
       - name: Generate Release Preview
         id: release-preview
+        env:
+          NEXT_VERSION: ${{ steps.analyze.outputs.next_version }}
+          BUMP: ${{ steps.analyze.outputs.bump }}
+          HAS_RELEASABLE_CHANGES: ${{ steps.analyze.outputs.has_releasable_changes }}
         run: |
           echo "## 📦 Release Preview" > release-preview.md
           echo "" >> release-preview.md
 
-          if [[ -n "${{ steps.analyze.outputs.next_version }}" ]]; then
-            echo "🚀 **Version that would be released:** \`${{ steps.analyze.outputs.next_version }}\`" >> release-preview.md
+          if [[ -n "$NEXT_VERSION" ]]; then
+            echo "🚀 **Version that would be released:** \`$NEXT_VERSION\`" >> release-preview.md
             echo "" >> release-preview.md
-            echo "📊 **Bump type:** ${{ steps.analyze.outputs.bump }}" >> release-preview.md
+            echo "📊 **Bump type:** $BUMP" >> release-preview.md
             echo "" >> release-preview.md
             echo "### 📝 Changes" >> release-preview.md
             echo "" >> release-preview.md
@@ -214,7 +231,7 @@ jobs:
           else
             echo "🔍 **No pre-release will be created**" >> release-preview.md
             echo "" >> release-preview.md
-            if [[ "${{ steps.analyze.outputs.has_releasable_changes }}" == "false" ]]; then
+            if [[ "$HAS_RELEASABLE_CHANGES" == "false" ]]; then
               echo "This PR only contains commits with types that don't trigger releases:" >> release-preview.md
               echo "- \`refactor:\`, \`chore:\`, \`docs:\`, \`style:\`, \`test:\`, \`ci:\`, \`build:\`, \`perf:\`, \`revert:\`" >> release-preview.md
               echo "" >> release-preview.md
@@ -239,7 +256,7 @@ jobs:
           } >> $GITHUB_OUTPUT
 
       - name: Find existing comment
-        uses: peter-evans/find-comment@v3
+        uses: peter-evans/find-comment@3eae4d37986fb5a8592848f6a574fdf654e61f9e # v3
         id: find-comment
         with:
           issue-number: ${{ github.event.pull_request.number }}
@@ -247,7 +264,9 @@ jobs:
           body-includes: "📦 Release Preview"
 
       - name: Create or update comment
-        uses: peter-evans/create-or-update-comment@v4
+        # Intentional: find-and-edit a single PR comment by body text. Suppressed
+        # in .github/zizmor.yml (rules.superfluous-actions). Pinned to a full SHA.
+        uses: peter-evans/create-or-update-comment@71345be0265236311c031f5c7866368bd1eff043 # v4
         with:
           comment-id: ${{ steps.find-comment.outputs.comment-id }}
           issue-number: ${{ github.event.pull_request.number }}
@@ -259,7 +278,9 @@ jobs:
     runs-on: ubuntu-latest
     container: mysten/sui-tools:mainnet-v1.57.3@sha256:2ec8e8abdf73ab158df4a82406f448d69ade64303d4b30669d2fdec263f9be5f
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
       - name: Test Sui PTB Resolver
         working-directory: sui_ptb_resolver
         run: |
