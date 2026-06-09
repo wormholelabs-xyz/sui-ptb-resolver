@@ -1,4 +1,4 @@
-import type { SuiClient } from '@mysten/sui/client';
+import type { SuiJsonRpcClient } from '@mysten/sui/jsonRpc';
 
 import { addressToBytes, bytesToAddress } from '../bcs/converters.js';
 import type { OffchainLookup } from '../types/index.js';
@@ -18,7 +18,7 @@ export class DynamicFieldByTypeHandler
 {
   async resolve(
     lookup: Extract<OffchainLookup, { variant: 'DynamicFieldByType' }>,
-    client: SuiClient
+    client: SuiJsonRpcClient
   ): Promise<Uint8Array> {
     const { parent_object, type_suffix, extract_field, placeholder_name } = lookup.fields;
 

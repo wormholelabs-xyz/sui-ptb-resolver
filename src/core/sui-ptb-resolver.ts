@@ -4,7 +4,7 @@
  * Main resolver class for gas-free PTB resolution using sui_ptb_resolver framework.
  */
 
-import { SuiClient } from '@mysten/sui/client';
+import { SuiJsonRpcClient } from '@mysten/sui/jsonRpc';
 import { Transaction } from '@mysten/sui/transactions';
 
 import { bytesToAddress } from '../bcs/converters.js';
@@ -30,12 +30,12 @@ export type ResolverCallbackFn = (discoveredData: Uint8Array) => Promise<Transac
  * Works with any resolver implementation that follows the sui_ptb_resolver pattern.
  */
 export class SuiPTBResolver {
-  private client: SuiClient;
+  private client: SuiJsonRpcClient;
   private lookupResolver: OffchainLookupResolver;
   private eventParser: EventParser;
   private config: SuiPTBResolverConfig;
 
-  constructor(config: SuiPTBResolverConfig, client?: SuiClient) {
+  constructor(config: SuiPTBResolverConfig, client?: SuiJsonRpcClient) {
     this.config = {
       maxIterations: DEFAULT_MAX_ITERATIONS,
       debug: false,
@@ -43,7 +43,8 @@ export class SuiPTBResolver {
       ...config,
     };
 
-    this.client = client ?? new SuiClient({ url: config.network.rpcUrl });
+    this.client =
+      client ?? new SuiJsonRpcClient({ url: config.network.rpcUrl, network: config.network.name });
     this.lookupResolver = new OffchainLookupResolver();
     this.eventParser = new EventParser();
   }
@@ -174,7 +175,7 @@ export class SuiPTBResolver {
    * Get the SUI client
    * @returns SUI client instance
    */
-  getClient(): SuiClient {
+  getClient(): SuiJsonRpcClient {
     return this.client;
   }
 

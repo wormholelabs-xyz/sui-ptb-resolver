@@ -4,7 +4,7 @@
  * Generic orchestrator that dispatches lookup requests to appropriate handlers.
  */
 
-import type { SuiClient } from '@mysten/sui/client';
+import type { SuiJsonRpcClient } from '@mysten/sui/jsonRpc';
 
 import type { OffchainLookup } from '../types/index.js';
 import { LookupResolutionError } from './base.js';
@@ -29,7 +29,7 @@ export class OffchainLookupResolver {
    * @returns Resolved value as bytes
    * @throws LookupResolutionError if lookup fails
    */
-  async resolve(lookup: OffchainLookup, client: SuiClient): Promise<Uint8Array> {
+  async resolve(lookup: OffchainLookup, client: SuiJsonRpcClient): Promise<Uint8Array> {
     const variant = lookup.variant;
 
     switch (variant) {

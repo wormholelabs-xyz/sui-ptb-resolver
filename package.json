@@ -80,7 +80,7 @@
     "typescript": "^5.8.3"
   },
   "dependencies": {
-    "@mysten/sui": "^1.37.1"
+    "@mysten/sui": "^2.14.1"
   },
   "config": {
     "commitizen": {
