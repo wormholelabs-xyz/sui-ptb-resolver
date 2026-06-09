@@ -1,23 +1,10 @@
-import { bcs } from '@mysten/sui/bcs';
 import type { SuiGrpcClient } from '@mysten/sui/grpc';
 import { deriveDynamicFieldID, parseStructTag } from '@mysten/sui/utils';
 
 import { bytesToAddress, stringToBytes } from '../bcs/converters.js';
 import type { OffchainLookup, StructField } from '../types/index.js';
 import { LookupResolutionError, type OffchainLookupHandler } from './base.js';
-
-// OpenSignatureBody.Type enum values we encode (subset relevant to table keys).
-// Source: @mysten/sui/grpc proto sui.rpc.v2.OpenSignatureBody.Type.
-const SIG_TYPE = {
-  ADDRESS: 1,
-  U8: 2,
-  U16: 4,
-  U32: 5,
-  U64: 6,
-  U128: 7,
-  U256: 8,
-  VECTOR: 9,
-} as const;
+import { concatBytes, encodeFieldValue } from './key-encoding.js';
 
 /**
  * Handler for TableItem lookups (gRPC).
@@ -127,46 +114,10 @@ export class TableItemHandler
           { provided: Array.from(byName.keys()) }
         );
       }
-      parts.push(this.encodeFieldValue(fd.type?.type, raw, fieldName, keyType));
+      parts.push(encodeFieldValue(fd.type?.type, raw, fieldName, keyType));
     }
 
     return concatBytes(parts);
-  }
-
-  /**
-   * Re-encode a single field's resolver-provided bytes to canonical struct-BCS,
-   * based on its Move type. Numeric fields arrive already as their LE bytes;
-   * vector<u8> arrives raw and needs a ULEB128 length prefix.
-   */
-  private encodeFieldValue(
-    sigType: number | undefined,
-    raw: Uint8Array,
-    fieldName: string,
-    keyType: string
-  ): Uint8Array {
-    switch (sigType) {
-      case SIG_TYPE.ADDRESS:
-        // 32 bytes, no length prefix.
-        return raw;
-      case SIG_TYPE.U8:
-      case SIG_TYPE.U16:
-      case SIG_TYPE.U32:
-      case SIG_TYPE.U64:
-      case SIG_TYPE.U128:
-      case SIG_TYPE.U256:
-        // Fixed-width LE integer — resolver already provided the exact bytes.
-        return raw;
-      case SIG_TYPE.VECTOR:
-        // vector<u8>: ULEB128 length prefix + raw bytes. bcs.vector(bcs.u8())
-        // produces exactly this, matching Move's struct encoding.
-        return bcs.vector(bcs.u8()).serialize(Array.from(raw)).toBytes();
-      default:
-        throw new LookupResolutionError(
-          'TableItem',
-          `Unsupported key field type for '${fieldName}' in ${keyType}`,
-          { sigType }
-        );
-    }
   }
 
   // Legacy raw key: the bytes are used as-is (vector<u8> key encoded by caller).
@@ -270,15 +221,4 @@ function extractTableId(value: unknown): string | null {
   }
   if (typeof obj.name === 'string') return obj.name;
   return null;
-}
-
-function concatBytes(parts: Uint8Array[]): Uint8Array {
-  const total = parts.reduce((n, p) => n + p.length, 0);
-  const out = new Uint8Array(total);
-  let offset = 0;
-  for (const p of parts) {
-    out.set(p, offset);
-    offset += p.length;
-  }
-  return out;
 }
