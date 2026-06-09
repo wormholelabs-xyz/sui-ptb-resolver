@@ -1,0 +1,13 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "rootDir": ".",
+    "types": ["bun"],
+    "noUnusedLocals": false,
+    "noUnusedParameters": false
+  },
+  // Typecheck test files (excluded from the build tsconfig so they don't emit to dist/).
+  "include": ["src/**/*.ts"],
+  "exclude": ["node_modules", "dist", "coverage"]
+}
