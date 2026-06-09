@@ -1,103 +1,94 @@
-import type { SuiJsonRpcClient } from '@mysten/sui/jsonRpc';
+import { bcs } from '@mysten/sui/bcs';
+import type { SuiClientTypes } from '@mysten/sui/client';
+import type { SuiGrpcClient } from '@mysten/sui/grpc';
 
 import { addressToBytes, bytesToAddress } from '../bcs/converters.js';
 import type { OffchainLookup } from '../types/index.js';
 import { LookupResolutionError, type OffchainLookupHandler } from './base.js';
 
+// A dynamic-field value holding a single `package: address` (e.g. Wormhole
+// State's CurrentPackage). A single-address-field struct BCS-encodes as exactly
+// 32 bytes. Field order/shape verified against the executor's CurrentPackageValueBcs.
+const SingleAddressValueBcs = bcs.struct('SingleAddressValue', {
+  value: bcs.Address,
+});
+
 /**
- * Handler for DynamicFieldByType lookups
+ * Handler for DynamicFieldByType lookups (gRPC).
  *
- * 1. Fetch all dynamic fields of parent object
- * 2. Filter by type_suffix (e.g., "CurrentPackage" for Core/TB state contracts)
- * 3. Get the matched field object
- * 4. Extract the field specified by extract_field (e.g., "package")
- * 5. Return as address bytes
+ * 1. List dynamic fields of the parent object.
+ * 2. Match by type_suffix (e.g. "CurrentPackage").
+ * 3. BCS-decode the field value to extract the address (extract_field, e.g. "package").
+ * 4. Fallback: Wormhole State objects keep the package in the object TYPE prefix,
+ *    not a dynamic field — derive it from the parent's type when no field matches.
+ * Returns 32-byte address.
  */
 export class DynamicFieldByTypeHandler
   implements OffchainLookupHandler<Extract<OffchainLookup, { variant: 'DynamicFieldByType' }>>
 {
   async resolve(
     lookup: Extract<OffchainLookup, { variant: 'DynamicFieldByType' }>,
-    client: SuiJsonRpcClient
+    client: SuiGrpcClient
   ): Promise<Uint8Array> {
     const { parent_object, type_suffix, extract_field, placeholder_name } = lookup.fields;
 
     const parentAddress = bytesToAddress(parent_object);
 
     try {
-      const fieldsResponse = await client.getDynamicFields({
-        parentId: parentAddress,
-      });
+      // Page through dynamic fields looking for one whose type ends with the suffix.
+      let cursor: string | null = null;
+      let hasNextPage = true;
+      while (hasNextPage) {
+        const page: SuiClientTypes.ListDynamicFieldsResponse = await client.listDynamicFields({
+          parentId: parentAddress,
+          cursor,
+        });
 
-      const matchingField = fieldsResponse.data.find((field) => {
-        const objectType = field.objectType ?? field.name?.type;
-        return objectType?.endsWith(type_suffix);
-      });
-
-      if (!matchingField) {
-        // WORKAROUND: For Wormhole State objects, package IDs are not in dynamic fields
-        // but in the object type itself. If looking for "package" field and no dynamic
-        // field found, try extracting from the parent object's type.
-        if (extract_field === 'package' || type_suffix === 'CurrentPackage') {
-          const parentObj = await client.getObject({
-            id: parentAddress,
-            options: { showContent: true },
+        const match = page.dynamicFields.find((f: SuiClientTypes.DynamicFieldEntry) =>
+          f.type.endsWith(type_suffix)
+        );
+        if (match) {
+          // Re-fetch the field with its value bytes and BCS-decode the address.
+          const field = await client.getDynamicField({
+            parentId: parentAddress,
+            name: match.name,
           });
-
-          if (parentObj.data?.content?.dataType === 'moveObject') {
-            const objectType = parentObj.data.content.type;
-            const packageId = objectType.split('::')[0];
-
-            if (packageId) {
-              return addressToBytes(packageId);
-            }
+          const valueBcs = field.dynamicField.value?.bcs;
+          if (!valueBcs) {
+            throw new LookupResolutionError('DynamicFieldByType', 'Field has no BCS value', {
+              type_suffix,
+              extract_field,
+            });
           }
+          const decoded = SingleAddressValueBcs.parse(valueBcs);
+          return addressToBytes(decoded.value);
         }
 
-        throw new LookupResolutionError(
-          'DynamicFieldByType',
-          `No dynamic field found with type suffix: ${type_suffix}`,
-          { parentAddress, type_suffix }
-        );
+        hasNextPage = page.hasNextPage;
+        cursor = page.cursor;
       }
 
-      const fieldObject = await client.getObject({
-        id: matchingField.objectId,
-        options: { showContent: true },
-      });
-
-      if (fieldObject.data?.content?.dataType !== 'moveObject') {
-        throw new LookupResolutionError('DynamicFieldByType', 'Field object is not a Move object', {
-          fieldObjectId: matchingField.objectId,
-        });
-      }
-
-      const fields = fieldObject.data.content.fields as Record<string, unknown>;
-      const extractedValue = fields[extract_field];
-
-      if (extractedValue === undefined || extractedValue === null) {
-        throw new LookupResolutionError(
-          'DynamicFieldByType',
-          `Field '${extract_field}' not found in object`,
-          { availableFields: Object.keys(fields) }
-        );
-      }
-
-      if (typeof extractedValue === 'string') {
-        return addressToBytes(extractedValue);
+      // FALLBACK: Wormhole State objects expose the current package in the object
+      // TYPE prefix (0xPKG::module::State), not as a dynamic field.
+      if (extract_field === 'package' || type_suffix === 'CurrentPackage') {
+        const { object } = await client.getObject({ objectId: parentAddress });
+        const packageId = object.type.split('::')[0];
+        if (packageId) {
+          return addressToBytes(packageId);
+        }
       }
 
       throw new LookupResolutionError(
         'DynamicFieldByType',
-        `Expected address string, got ${typeof extractedValue}`,
-        { extractedValue }
+        `No dynamic field found with type suffix: ${type_suffix}`,
+        { parentAddress, type_suffix }
       );
     } catch (error) {
       if (error instanceof LookupResolutionError) {
         throw error;
       }
 
-      throw new LookupResolutionError('DynamicFieldByType', 'RPC call failed', {
+      throw new LookupResolutionError('DynamicFieldByType', 'gRPC call failed', {
         error: error instanceof Error ? error.message : String(error),
         placeholder_name,
         parentAddress,

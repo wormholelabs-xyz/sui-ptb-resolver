@@ -1,25 +1,43 @@
 import { bcs } from '@mysten/sui/bcs';
-import type { SuiJsonRpcClient } from '@mysten/sui/jsonRpc';
+import type { SuiGrpcClient } from '@mysten/sui/grpc';
+import { deriveDynamicFieldID, parseStructTag } from '@mysten/sui/utils';
 
 import { bytesToAddress, stringToBytes } from '../bcs/converters.js';
 import type { OffchainLookup, StructField } from '../types/index.js';
 import { LookupResolutionError, type OffchainLookupHandler } from './base.js';
 
+// OpenSignatureBody.Type enum values we encode (subset relevant to table keys).
+// Source: @mysten/sui/grpc proto sui.rpc.v2.OpenSignatureBody.Type.
+const SIG_TYPE = {
+  ADDRESS: 1,
+  U8: 2,
+  U16: 4,
+  U32: 5,
+  U64: 6,
+  U128: 7,
+  U256: 8,
+  VECTOR: 9,
+} as const;
+
 /**
- * Handler for TableItem lookups
+ * Handler for TableItem lookups (gRPC).
  *
- * Process:
- * 1. Navigate table_path to find the table ID (e.g., "token_registry.coin_types")
- * 2. Build structured key from key_structured if provided, else use key_raw
- * 3. Fetch dynamic field from table using the key
- * 4. Extract and return the value as bytes
+ * gRPC has no `getDynamicFieldObject({name:{type,value}})` that BCS-encodes the
+ * key by name. We instead:
+ *  1. Navigate `table_path` over the parent object's JSON content to find the
+ *     table's object id (json is fine for *navigation* — field names only).
+ *  2. Encode the structured key to BCS in the key struct's DECLARED field order,
+ *     fetched generically from chain via movePackageService.getDatatype (so any
+ *     resolver's key encodes correctly, not just CoinTypeKey).
+ *  3. Derive the dynamic-field object id (deriveDynamicFieldID) and getObject it.
+ *  4. Decode the value bytes (json for navigation done; value via bcs/json).
  */
 export class TableItemHandler
   implements OffchainLookupHandler<Extract<OffchainLookup, { variant: 'TableItem' }>>
 {
   async resolve(
     lookup: Extract<OffchainLookup, { variant: 'TableItem' }>,
-    client: SuiJsonRpcClient
+    client: SuiGrpcClient
   ): Promise<Uint8Array> {
     const { parent_object, table_path, key_raw, key_structured, key_type, placeholder_name } =
       lookup.fields;
@@ -29,60 +47,33 @@ export class TableItemHandler
     try {
       const tableId = await this.navigateTablePath(client, parentAddress, table_path);
 
-      let decodedKey: unknown;
+      // Build the BCS bytes of the key as Move would encode the key struct/value.
+      const keyBcs = key_structured
+        ? await this.encodeStructuredKey(client, key_type, key_structured)
+        : this.encodeRawKey(key_raw!);
 
-      if (key_structured) {
-        // For structured keys, we build the key ourselves
-        decodedKey = this.buildStructuredKey(key_structured);
-      } else {
-        // For legacy raw keys, decode based on key_type
-        decodedKey = this.decodeLegacyKey(key_raw!, key_type, table_path);
-      }
+      // Derive the dynamic field object id and fetch it.
+      const fieldId = deriveDynamicFieldID(tableId, key_type, keyBcs);
+      const { object } = await client.getObject({ objectId: fieldId, include: { json: true } });
 
-      const tableItem = await client.getDynamicFieldObject({
-        parentId: tableId,
-        name: {
-          type: key_type,
-          value: decodedKey,
-        },
-      });
-
-      if (tableItem.data?.content?.dataType !== 'moveObject') {
-        throw new LookupResolutionError('TableItem', 'Table item is not a Move object', {
-          tableId,
-          key_type,
-          decodedKey,
-        });
-      }
-
-      const fields = tableItem.data.content.fields as Record<string, unknown>;
-      const value = fields.value;
+      // The Field<K, V> wrapper exposes the stored value under `value`.
+      const json = object.json as Record<string, unknown> | null;
+      const value = json?.value;
 
       if (value === undefined || value === null) {
         throw new LookupResolutionError('TableItem', 'Table item has no value field', {
-          availableFields: Object.keys(fields),
+          fieldId,
+          availableFields: json ? Object.keys(json) : [],
         });
       }
 
-      if (typeof value === 'string') {
-        // Coin type or other string value
-        return stringToBytes(value);
-      }
-
-      if (Array.isArray(value)) {
-        // Already bytes
-        return new Uint8Array(value);
-      }
-
-      throw new LookupResolutionError('TableItem', `Unexpected value type: ${typeof value}`, {
-        value,
-      });
+      return this.valueToBytes(value);
     } catch (error) {
       if (error instanceof LookupResolutionError) {
         throw error;
       }
 
-      throw new LookupResolutionError('TableItem', 'RPC call failed', {
+      throw new LookupResolutionError('TableItem', 'gRPC call failed', {
         error: error instanceof Error ? error.message : String(error),
         placeholder_name,
         parentAddress,
@@ -91,138 +82,203 @@ export class TableItemHandler
     }
   }
 
-  private buildStructuredKey(fields: StructField[]): Record<string, unknown> {
-    const key: Record<string, unknown> = {};
+  /**
+   * Encode the structured key to BCS in the key struct's declared field order.
+   *
+   * The resolver emits fields by NAME with per-field bytes that are NOT uniformly
+   * BCS-encoded (e.g. a `vector<u8>` addr is raw, a `u16` chain is already its 2
+   * LE bytes). We fetch the struct layout from chain to learn (a) field order and
+   * (b) each field's Move type, then re-encode each value to canonical struct-BCS.
+   */
+  private async encodeStructuredKey(
+    client: SuiGrpcClient,
+    keyType: string,
+    fields: StructField[]
+  ): Promise<Uint8Array> {
+    const tag = parseStructTag(keyType);
 
-    for (const field of fields) {
-      const fieldName = new TextDecoder().decode(field.name);
-      const fieldValue = field.value;
-
-      // Decode the BCS value based on common patterns
-      const decodedValue = this.decodeBCSValue(fieldValue, fieldName);
-      key[fieldName] = decodedValue;
+    const resp = await client.movePackageService.getDatatype({
+      packageId: tag.address,
+      moduleName: tag.module,
+      name: tag.name,
+    });
+    const descriptorFields = resp.response.datatype?.fields;
+    if (!descriptorFields || descriptorFields.length === 0) {
+      throw new LookupResolutionError('TableItem', 'Key datatype has no fields', { keyType });
     }
 
-    return key;
-  }
-
-  private decodeBCSValue(bytes: Uint8Array, fieldName: string): unknown {
-    const lowerName = fieldName.toLowerCase();
-
-    if (lowerName.includes('chain')) {
-      // Decode as u16
-      return bcs.u16().parse(bytes);
+    // Index the resolver-provided values by field name.
+    const byName = new Map<string, Uint8Array>();
+    for (const f of fields) {
+      byName.set(new TextDecoder().decode(f.name), new Uint8Array(f.value));
     }
 
-    if (lowerName.includes('addr') || lowerName.includes('address')) {
-      return Array.from(bytes);
-    }
-
-    if (lowerName.includes('amount') || lowerName.includes('value')) {
-      // Try u64 first
-      try {
-        return bcs.u64().parse(bytes).toString();
-      } catch {
-        // Try u256
-        try {
-          return bcs.u256().parse(bytes).toString();
-        } catch {
-          // Fall back to raw bytes
-          return Array.from(bytes);
-        }
+    const parts: Uint8Array[] = [];
+    for (const fd of descriptorFields) {
+      const fieldName = fd.name;
+      if (fieldName === undefined) {
+        throw new LookupResolutionError('TableItem', 'Datatype field missing name', { keyType });
       }
+      const raw = byName.get(fieldName);
+      if (!raw) {
+        throw new LookupResolutionError(
+          'TableItem',
+          `Key is missing field '${fieldName}' required by ${keyType}`,
+          { provided: Array.from(byName.keys()) }
+        );
+      }
+      parts.push(this.encodeFieldValue(fd.type?.type, raw, fieldName, keyType));
     }
 
-    // Default: return as raw bytes array
-    return Array.from(bytes);
+    return concatBytes(parts);
   }
 
-  private decodeLegacyKey(key: Uint8Array, keyType: string, _tablePath: string): unknown {
-    if (keyType.includes('vector<u8>')) {
-      return Array.from(key);
+  /**
+   * Re-encode a single field's resolver-provided bytes to canonical struct-BCS,
+   * based on its Move type. Numeric fields arrive already as their LE bytes;
+   * vector<u8> arrives raw and needs a ULEB128 length prefix.
+   */
+  private encodeFieldValue(
+    sigType: number | undefined,
+    raw: Uint8Array,
+    fieldName: string,
+    keyType: string
+  ): Uint8Array {
+    switch (sigType) {
+      case SIG_TYPE.ADDRESS:
+        // 32 bytes, no length prefix.
+        return raw;
+      case SIG_TYPE.U8:
+      case SIG_TYPE.U16:
+      case SIG_TYPE.U32:
+      case SIG_TYPE.U64:
+      case SIG_TYPE.U128:
+      case SIG_TYPE.U256:
+        // Fixed-width LE integer — resolver already provided the exact bytes.
+        return raw;
+      case SIG_TYPE.VECTOR:
+        // vector<u8>: ULEB128 length prefix + raw bytes. bcs.vector(bcs.u8())
+        // produces exactly this, matching Move's struct encoding.
+        return bcs.vector(bcs.u8()).serialize(Array.from(raw)).toBytes();
+      default:
+        throw new LookupResolutionError(
+          'TableItem',
+          `Unsupported key field type for '${fieldName}' in ${keyType}`,
+          { sigType }
+        );
     }
-
-    return Array.from(key);
   }
 
+  // Legacy raw key: the bytes are used as-is (vector<u8> key encoded by caller).
+  private encodeRawKey(key: Uint8Array): Uint8Array {
+    return new Uint8Array(key);
+  }
+
+  private valueToBytes(value: unknown): Uint8Array {
+    if (typeof value === 'string') {
+      // Coin type or other string value. Mirrors the JSON-RPC handler.
+      return stringToBytes(value);
+    }
+    if (Array.isArray(value)) {
+      return new Uint8Array(value as number[]);
+    }
+    throw new LookupResolutionError('TableItem', `Unexpected value type: ${typeof value}`, {
+      value,
+    });
+  }
+
+  /**
+   * Walk a dot-path (e.g. "token_registry.coin_types") over the parent object's
+   * JSON content to find the nested table's object id. JSON is used only for
+   * navigation (field names), never for the resolved value.
+   */
   private async navigateTablePath(
-    client: SuiJsonRpcClient,
+    client: SuiGrpcClient,
     parentAddress: string,
     path: string
   ): Promise<string> {
-    const pathParts = path.split('.');
-
-    const currentObject = await client.getObject({
-      id: parentAddress,
-      options: { showContent: true },
+    const { object } = await client.getObject({
+      objectId: parentAddress,
+      include: { json: true },
     });
 
-    if (currentObject.data?.content?.dataType !== 'moveObject') {
-      throw new LookupResolutionError('TableItem', 'Parent object is not a Move object', {
+    const content = object.json as Record<string, unknown> | null;
+    if (!content) {
+      throw new LookupResolutionError('TableItem', 'Parent object has no JSON content', {
         parentAddress,
       });
     }
 
-    let currentFields = currentObject.data.content.fields as Record<string, unknown>;
+    const pathParts = path.split('.').filter(Boolean);
+    let current: unknown = content;
 
     for (let i = 0; i < pathParts.length; i++) {
-      const part = pathParts[i];
-      if (!part) continue;
+      const part = pathParts[i]!;
+      if (typeof current !== 'object' || current === null) {
+        throw new LookupResolutionError('TableItem', `Path component '${part}' is not an object`, {
+          path,
+          currentStep: i,
+        });
+      }
 
-      let fieldValue = currentFields[part];
-
+      let fieldValue = (current as Record<string, unknown>)[part];
       if (fieldValue === undefined || fieldValue === null) {
         throw new LookupResolutionError('TableItem', `Path component '${part}' not found`, {
           path,
           currentStep: i,
-          availableFields: Object.keys(currentFields),
+          availableFields: Object.keys(current as Record<string, unknown>),
         });
       }
 
-      if (typeof fieldValue === 'object' && fieldValue !== null) {
-        const obj = fieldValue as Record<string, unknown>;
-        if ('fields' in obj && typeof obj.fields === 'object') {
-          fieldValue = obj.fields as Record<string, unknown>;
-        }
+      // Unwrap a nested { fields: {...} } shape if present (JSON-RPC-style).
+      if (typeof fieldValue === 'object' && fieldValue !== null && 'fields' in fieldValue) {
+        fieldValue = (fieldValue as Record<string, unknown>).fields;
       }
 
       if (i === pathParts.length - 1) {
-        if (typeof fieldValue === 'object' && fieldValue !== null) {
-          const tableObj = fieldValue as Record<string, unknown>;
-
-          const tableId =
-            (tableObj.id as Record<string, unknown> | undefined)?.id ??
-            tableObj.name ??
-            tableObj.table_id;
-
-          if (typeof tableId !== 'string') {
-            throw new LookupResolutionError(
-              'TableItem',
-              `Could not extract table ID from field '${part}'`,
-              { fieldValue }
-            );
-          }
-
-          return tableId;
+        const tableId = extractTableId(fieldValue);
+        if (!tableId) {
+          throw new LookupResolutionError(
+            'TableItem',
+            `Could not extract table id from field '${part}'`,
+            { fieldValue }
+          );
         }
-
-        throw new LookupResolutionError(
-          'TableItem',
-          `Could not extract table ID from field '${part}'`,
-          { fieldValue }
-        );
+        return tableId;
       }
 
-      if (typeof fieldValue === 'object' && fieldValue !== null) {
-        currentFields = fieldValue as Record<string, unknown>;
-      } else {
-        throw new LookupResolutionError('TableItem', `Path component '${part}' is not an object`, {
-          part,
-          fieldValue,
-        });
-      }
+      current = fieldValue;
     }
 
     throw new LookupResolutionError('TableItem', 'Failed to navigate table path', { path });
   }
+}
+
+/** A Sui Table/Bag serializes its UID; the id may appear as `id`, `id.id`, or `name`. */
+function extractTableId(value: unknown): string | null {
+  if (typeof value === 'string') return value;
+  if (typeof value !== 'object' || value === null) return null;
+  const obj = value as Record<string, unknown>;
+  const id = obj.id;
+  if (typeof id === 'string') return id;
+  if (
+    typeof id === 'object' &&
+    id !== null &&
+    typeof (id as Record<string, unknown>).id === 'string'
+  ) {
+    return (id as Record<string, unknown>).id as string;
+  }
+  if (typeof obj.name === 'string') return obj.name;
+  return null;
+}
+
+function concatBytes(parts: Uint8Array[]): Uint8Array {
+  const total = parts.reduce((n, p) => n + p.length, 0);
+  const out = new Uint8Array(total);
+  let offset = 0;
+  for (const p of parts) {
+    out.set(p, offset);
+    offset += p.length;
+  }
+  return out;
 }

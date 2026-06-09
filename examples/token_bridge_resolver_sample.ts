@@ -1,7 +1,16 @@
-import { SuiJsonRpcClient } from '@mysten/sui/jsonRpc';
+import { bcs } from '@mysten/sui/bcs';
+import { SuiGrpcClient } from '@mysten/sui/grpc';
 import { fromBase64 } from '@mysten/sui/utils';
 
 import { getNetworkConfig, SuiPTBResolver } from '../src';
+
+// Minimal BCS schema for the resolver State object's content (gRPC returns BCS).
+// Field order must match the Move `State { id, package_id, module_name, ... }`.
+const ResolverStateBcs = bcs.struct('ResolverState', {
+  id: bcs.Address,
+  package_id: bcs.Address,
+  module_name: bcs.string(),
+});
 
 // Token Bridge Relayer V4 PTB resolver (production, from
 // example-permissionless-token-bridge-executor-shim). Its on-chain package
@@ -24,26 +33,22 @@ export const SAMPLE_VAA =
 
 async function main() {
   const network = getNetworkConfig('mainnet');
-  const client = new SuiJsonRpcClient({ url: network.rpcUrl, network: network.name });
+  const client = new SuiGrpcClient({ baseUrl: network.grpcUrl, network: network.name });
   const { stateId } = TOKEN_BRIDGE_CONFIG.mainnet;
 
   if (!stateId) {
     throw new Error('State ID not configured');
   }
 
-  // Fetch State object to get package_id and module_name
-  const stateObject = await client.getObject({
-    id: stateId,
-    options: { showContent: true },
-  });
-
-  if (!stateObject.data?.content || stateObject.data.content.dataType !== 'moveObject') {
-    throw new Error('Invalid State object');
+  // Fetch State object content (BCS) to get package_id and module_name.
+  const { object } = await client.getObject({ objectId: stateId, include: { content: true } });
+  if (!object.content) {
+    throw new Error('Invalid State object: no content');
   }
 
-  const fields = stateObject.data.content.fields as Record<string, unknown>;
-  const packageId = fields.package_id as string;
-  const moduleName = fields.module_name as string;
+  const state = ResolverStateBcs.parse(object.content);
+  const packageId = state.package_id;
+  const moduleName = state.module_name;
 
   if (!packageId || !moduleName) {
     throw new Error('State object missing package_id or module_name');

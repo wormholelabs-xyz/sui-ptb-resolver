@@ -98,6 +98,15 @@ export const ResolverInstructionsEventBCS: any = bcs.struct('ResolverInstruction
   required_types: bcs.vector(bcs.string()),
 });
 
+// Mirrors Move `ptb_types::ResolverNeedsDataEvent`. Parsed from event BCS (not
+// JSON) so the shape is identical across JSON-RPC / gRPC / GraphQL.
+export const ResolverNeedsDataEventBCS = bcs.struct('ResolverNeedsDataEvent', {
+  parent_object: bcs.fixedArray(32, bcs.u8()),
+  lookup_key: bcs.vector(bcs.u8()),
+  key_type: bcs.string(),
+  placeholder_name: bcs.string(),
+});
+
 export const OffchainLookupBCS = bcs.enum('OffchainLookup', {
   DynamicField: bcs.struct('DynamicField', {
     parent_object: bcs.fixedArray(32, bcs.u8()),

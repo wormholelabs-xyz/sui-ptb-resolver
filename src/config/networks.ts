@@ -3,11 +3,15 @@ import type { NetworkConfig, NetworkConfigs, NetworkName } from '../types/index.
 export const NETWORKS: NetworkConfigs = {
   mainnet: {
     name: 'mainnet',
+    // Public Sui fullnode serves gRPC(-web) on the same host. For production,
+    // prefer a dedicated gRPC provider — public nodes may rate-limit gRPC.
+    grpcUrl: 'https://fullnode.mainnet.sui.io:443',
     rpcUrl: 'https://fullnode.mainnet.sui.io:443',
   },
 
   testnet: {
     name: 'testnet',
+    grpcUrl: 'https://fullnode.testnet.sui.io:443',
     rpcUrl: 'https://fullnode.testnet.sui.io:443',
   },
 };
