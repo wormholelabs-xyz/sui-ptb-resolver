@@ -4,7 +4,7 @@
  * Main resolver class for gas-free PTB resolution using sui_ptb_resolver framework.
  */
 
-import { SuiJsonRpcClient } from '@mysten/sui/jsonRpc';
+import { SuiGrpcClient } from '@mysten/sui/grpc';
 import { Transaction } from '@mysten/sui/transactions';
 
 import { bytesToAddress } from '../bcs/converters.js';
@@ -30,12 +30,12 @@ export type ResolverCallbackFn = (discoveredData: Uint8Array) => Promise<Transac
  * Works with any resolver implementation that follows the sui_ptb_resolver pattern.
  */
 export class SuiPTBResolver {
-  private client: SuiJsonRpcClient;
+  private client: SuiGrpcClient;
   private lookupResolver: OffchainLookupResolver;
   private eventParser: EventParser;
   private config: SuiPTBResolverConfig;
 
-  constructor(config: SuiPTBResolverConfig, client?: SuiJsonRpcClient) {
+  constructor(config: SuiPTBResolverConfig, client?: SuiGrpcClient) {
     this.config = {
       maxIterations: DEFAULT_MAX_ITERATIONS,
       debug: false,
@@ -44,7 +44,8 @@ export class SuiPTBResolver {
     };
 
     this.client =
-      client ?? new SuiJsonRpcClient({ url: config.network.rpcUrl, network: config.network.name });
+      client ??
+      new SuiGrpcClient({ baseUrl: config.network.grpcUrl, network: config.network.name });
     this.lookupResolver = new OffchainLookupResolver();
     this.eventParser = new EventParser();
   }
@@ -80,24 +81,27 @@ export class SuiPTBResolver {
       // Create resolver transaction with current discovered data
       const tx = await createResolverTx(discoveredData.serialize());
 
-      // Set up transaction for dry-run
+      // Set up transaction for dry-run simulation
       tx.setSender('0x0000000000000000000000000000000000000000000000000000000000000000');
       tx.setGasBudget(100_000_000);
 
-      // Execute dry-run
-      const dryRunResult = await this.client.dryRunTransactionBlock({
-        transactionBlock: await tx.build({ client: this.client }),
+      // Execute dry-run via gRPC simulateTransaction (replaces JSON-RPC
+      // dryRunTransactionBlock). We only need the emitted events.
+      const simResult = await this.client.simulateTransaction({
+        transaction: await tx.build({ client: this.client }),
+        include: { events: true },
       });
 
-      // Check execution status
-      if (dryRunResult.effects.status.status !== 'success') {
-        throw new Error(
-          `Dry-run execution failed: ${dryRunResult.effects.status.error ?? 'Unknown error'}`
-        );
+      // Check execution status. gRPC returns a discriminated result:
+      // { $kind: 'Transaction' } on success, { $kind: 'FailedTransaction' } on failure.
+      const simTx =
+        simResult.$kind === 'Transaction' ? simResult.Transaction : simResult.FailedTransaction;
+      if (!simTx.status.success) {
+        throw new Error(`Dry-run simulation failed: ${JSON.stringify(simTx.status.error)}`);
       }
 
-      // Parse events
-      const parsedEvent = this.eventParser.parseResolverEvent(dryRunResult.events || []);
+      // Parse events from the simulated transaction
+      const parsedEvent = this.eventParser.parseResolverEvent(simTx.events ?? []);
 
       if (parsedEvent.type === 'Resolved') {
         // Resolution complete! Build final PTB
@@ -175,7 +179,7 @@ export class SuiPTBResolver {
    * Get the SUI client
    * @returns SUI client instance
    */
-  getClient(): SuiJsonRpcClient {
+  getClient(): SuiGrpcClient {
     return this.client;
   }
 

@@ -5,10 +5,9 @@
  * Reconstructs OffchainLookup and PTB instructions from event data.
  */
 
-import type { SuiEvent } from '@mysten/sui/jsonRpc';
+import type { SuiClientTypes } from '@mysten/sui/client';
 
-import { addressToBytes, arrayToBytes } from '../bcs/converters.js';
-import { ResolverInstructionsEventBCS } from '../bcs/schemas.js';
+import { ResolverInstructionsEventBCS, ResolverNeedsDataEventBCS } from '../bcs/schemas.js';
 import { LOOKUP_KEY_SEPARATOR } from '../config/constants.js';
 import type {
   Command,
@@ -20,79 +19,76 @@ import type {
 } from '../types/index.js';
 import { findSeparator } from '../utils/index.js';
 
+/**
+ * gRPC event shape (from simulateTransaction). `bcs` is already raw bytes (no
+ * base64), and `json` shape varies across APIs — so we always parse `bcs`.
+ */
+type GrpcEvent = SuiClientTypes.Event;
+
 export class EventParser {
   /**
-   * Parse resolver events from dry-run result
-   * @param events - Events from dry-run execution
+   * Parse resolver events from a gRPC simulateTransaction result.
+   * @param events - Events from the simulated transaction
    * @returns Parsed event result
    * @throws Error if no resolver event found or parsing fails
    */
-  parseResolverEvent(events: SuiEvent[]): ParsedResolverEvent {
+  parseResolverEvent(events: GrpcEvent[]): ParsedResolverEvent {
     // Find resolver event
     const event = events.find(
       (e) =>
-        e.type.includes('ptb_types::ResolverNeedsDataEvent') ||
-        e.type.includes('ptb_types::ResolverInstructionsEvent')
+        e.eventType.includes('ptb_types::ResolverNeedsDataEvent') ||
+        e.eventType.includes('ptb_types::ResolverInstructionsEvent')
     );
 
     if (!event) {
-      throw new Error('No resolver event found in dry-run result');
+      throw new Error('No resolver event found in simulation result');
     }
 
     // Parse based on event type
-    if (event.type.includes('ResolverNeedsDataEvent')) {
+    if (event.eventType.includes('ResolverNeedsDataEvent')) {
       return this.parseNeedsDataEvent(event);
     }
 
-    if (event.type.includes('ResolverInstructionsEvent')) {
+    if (event.eventType.includes('ResolverInstructionsEvent')) {
       return this.parseInstructionsEvent(event);
     }
 
-    throw new Error(`Unknown resolver event type: ${event.type}`);
+    throw new Error(`Unknown resolver event type: ${event.eventType}`);
   }
 
-  private parseNeedsDataEvent(event: SuiEvent): ParsedResolverEvent {
-    const data = event.parsedJson as ResolverNeedsDataEvent;
+  private parseNeedsDataEvent(event: GrpcEvent): ParsedResolverEvent {
+    // Parse from event BCS (not json) for consistent shape across APIs.
+    const decoded = ResolverNeedsDataEventBCS.parse(event.bcs);
 
-    if (!data?.parent_object || !data.lookup_key || !data.placeholder_name) {
-      throw new Error('Invalid ResolverNeedsDataEvent: missing required fields');
-    }
-
-    const parentObject = this.parseAddress(data.parent_object);
-    const lookupKey = arrayToBytes(data.lookup_key);
+    const parentObject = new Uint8Array(decoded.parent_object);
+    const lookupKey = new Uint8Array(decoded.lookup_key);
 
     const lookup = this.reconstructLookup(
       parentObject,
       lookupKey,
-      data.key_type,
-      data.placeholder_name
+      decoded.key_type,
+      decoded.placeholder_name
     );
+
+    // `raw` keeps the decoded fields for callers/debugging.
+    const raw: ResolverNeedsDataEvent = {
+      parent_object: `0x${Buffer.from(parentObject).toString('hex')}`,
+      lookup_key: Array.from(lookupKey),
+      key_type: decoded.key_type,
+      placeholder_name: decoded.placeholder_name,
+    };
 
     return {
       type: 'NeedsData',
       lookup,
-      raw: data,
+      raw,
     };
   }
 
-  private parseInstructionsEvent(event: SuiEvent): ParsedResolverEvent {
-    const data = event.parsedJson as ResolverInstructionsEvent;
-
-    if (!data?.inputs || !data.commands) {
-      throw new Error('Invalid ResolverInstructionsEvent: missing required fields');
-    }
-
-    // IMPORTANT NOTE: Don't use parsedJson inputs/commands directly because Sui SDK
-    // incorrectly parses addresses in ObjectRef as strings instead of bytes.
-    // Instead, manually parse from the BCS event data.
-    const bcsData = event.bcs;
-    if (!bcsData) {
-      throw new Error('Event missing BCS data');
-    }
-
-    const parsed = ResolverInstructionsEventBCS.parse(
-      new Uint8Array(Buffer.from(bcsData, 'base64'))
-    );
+  private parseInstructionsEvent(event: GrpcEvent): ParsedResolverEvent {
+    // Always parse from BCS: the SDK warns json shape varies (JSON-RPC vs gRPC),
+    // and addresses in ObjectRef must be bytes, not strings.
+    const parsed = ResolverInstructionsEventBCS.parse(event.bcs);
 
     const inputs = parsed.inputs.map((input: unknown) => this.transformEnum(input)) as Input[];
     const commands = parsed.commands.map((cmd: unknown) =>
@@ -101,13 +97,22 @@ export class EventParser {
     const requiredObjects = parsed.required_objects.map((arr: number[]) => new Uint8Array(arr));
     const requiredTypes = parsed.required_types;
 
+    const raw: ResolverInstructionsEvent = {
+      inputs,
+      commands,
+      required_objects: requiredObjects.map(
+        (arr: Uint8Array) => `0x${Buffer.from(arr).toString('hex')}`
+      ),
+      required_types: requiredTypes,
+    };
+
     return {
       type: 'Resolved',
       inputs,
       commands,
       required_objects: requiredObjects,
       required_types: requiredTypes,
-      raw: data,
+      raw,
     };
   }
 
@@ -289,18 +294,6 @@ export class EventParser {
         placeholder_name: placeholderName,
       },
     };
-  }
-
-  private parseAddress(address: string | number[]): Uint8Array {
-    if (typeof address === 'string') {
-      return addressToBytes(address);
-    }
-
-    if (Array.isArray(address)) {
-      return arrayToBytes(address);
-    }
-
-    throw new Error(`Invalid address format: ${typeof address}`);
   }
 
   /**

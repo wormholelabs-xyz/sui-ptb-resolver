@@ -1,69 +1,74 @@
-import type { SuiJsonRpcClient } from '@mysten/sui/jsonRpc';
+import { bcs } from '@mysten/sui/bcs';
+import type { SuiGrpcClient } from '@mysten/sui/grpc';
 
 import { addressToBytes, bytesToAddress, bytesToHex, packObjectRef } from '../bcs/converters.js';
 import type { OffchainLookup } from '../types/index.js';
 import { LookupResolutionError, type OffchainLookupHandler } from './base.js';
 
 /**
- * Handler for DynamicObjectField lookups
+ * Handler for DynamicObjectField lookups (gRPC).
  *
  * Process:
- * 1. Fetch dynamic object field from parent using key
- * 2. Extract ObjectRef (object_id, version, digest)
- * 3. Return packed ObjectRef as bytes
+ * 1. Fetch the dynamic OBJECT field by its vector<u8> key.
+ * 2. Extract the child object's ObjectRef (object_id, version, digest).
+ * 3. Return the packed ObjectRef bytes.
+ *
+ * NOTE: not exercised by the production resolver. Implemented for completeness;
+ * unverified against live mainnet.
  */
 export class DynamicObjectFieldHandler
   implements OffchainLookupHandler<Extract<OffchainLookup, { variant: 'DynamicObjectField' }>>
 {
   async resolve(
     lookup: Extract<OffchainLookup, { variant: 'DynamicObjectField' }>,
-    client: SuiJsonRpcClient
+    client: SuiGrpcClient
   ): Promise<Uint8Array> {
     const { parent_object, key, placeholder_name } = lookup.fields;
 
     const parentAddress = bytesToAddress(parent_object);
 
     try {
-      const field = await client.getDynamicFieldObject({
+      const keyBcs = bcs.vector(bcs.u8()).serialize(Array.from(key)).toBytes();
+
+      // gRPC has no getDynamicObjectField; getDynamicField returns the entry. For a
+      // dynamic OBJECT field the entry carries the child object's id in `childId`.
+      const { dynamicField } = await client.getDynamicField({
         parentId: parentAddress,
-        name: {
-          type: 'vector<u8>',
-          value: Array.from(key),
-        },
+        name: { type: 'vector<u8>', bcs: keyBcs },
       });
 
-      if (!field.data) {
-        throw new LookupResolutionError('DynamicObjectField', 'Dynamic object field not found', {
+      const childId = dynamicField.$kind === 'DynamicObject' ? dynamicField.childId : undefined;
+      if (!childId) {
+        throw new LookupResolutionError(
+          'DynamicObjectField',
+          'Field is not a dynamic object field (no childId)',
+          { parentAddress, keyHex: bytesToHex(key) }
+        );
+      }
+
+      // Fetch the child object for its ObjectRef (version + digest).
+      const { object } = await client.getObject({ objectId: childId });
+      if (!object.objectId || !object.version || !object.digest) {
+        throw new LookupResolutionError('DynamicObjectField', 'Missing ObjectRef components', {
           parentAddress,
           keyHex: bytesToHex(key),
         });
       }
 
-      const objectId = field.data.objectId;
-      const version = field.data.version;
-      const digest = field.data.digest;
-
-      if (!objectId || !version || !digest) {
-        throw new LookupResolutionError('DynamicObjectField', 'Missing ObjectRef components', {
-          objectId,
-          version,
-          digest,
-        });
-      }
-
-      const objectRef = {
-        object_id: addressToBytes(objectId),
-        version: BigInt(version),
-        digest: typeof digest === 'string' ? new Uint8Array(Buffer.from(digest, 'base64')) : digest,
-      };
-
-      return packObjectRef(objectRef);
+      return packObjectRef({
+        object_id: addressToBytes(object.objectId),
+        version: BigInt(object.version),
+        digest:
+          typeof object.digest === 'string'
+            ? new Uint8Array(Buffer.from(object.digest, 'base64'))
+            : object.digest,
+      });
     } catch (error) {
       if (error instanceof LookupResolutionError) {
         throw error;
       }
 
-      throw new LookupResolutionError('DynamicObjectField', 'RPC call failed', {
+      throw new LookupResolutionError('DynamicObjectField', 'gRPC call failed', {
         error: error instanceof Error ? error.message : String(error),
         placeholder_name,
         parentAddress,
