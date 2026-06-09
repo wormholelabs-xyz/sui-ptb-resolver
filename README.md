@@ -31,16 +31,21 @@ Type-safe builder pattern for PTB construction with offchain data discovery.
 - Semantic key-based data management
 - Automatic type capture for pure inputs
 
-### 2. **Wormhole Token Bridge Resolver** ([wormhole_token_bridge_resolver/](./wormhole_token_bridge_resolver/))
+### 2. **Reference Resolver: Token Bridge Relayer V4**
 
-Proof-of-concept implementation showing complete Wormhole VAA redemption flow.
-
-**Demonstrates:**
+A production resolver built on this framework lives in
+[example-permissionless-token-bridge-executor-shim](https://github.com/wormholelabs-xyz/example-permissionless-token-bridge-executor-shim)
+(`sui/token_bridge_ptb_resolver`). It demonstrates the complete Wormhole VAA
+redemption flow:
 
 - Dynamic package and coin type discovery
-- 5-step token redemption flow
-- Direct recipient transfer from VAA
+- 4-command redemption PTB (parse_and_verify → verify_only_once →
+  authorize_transfer → execute_vaa_v1)
 - Structured key usage for table lookups
+- Length-prefixed structured-key encoding parsed by this SDK
+
+The [TypeScript example](./examples/token_bridge_resolver_sample.ts) resolves a
+VAA against this deployed resolver.
 
 ### 3. **TypeScript SDK** ([src/](./src/))
 
@@ -145,13 +150,11 @@ cd sui-ptb-resolver
 # Install TypeScript dependencies
 bun install
 
-# Build Move packages
+# Build Move package
 sui move build -p sui_ptb_resolver
-sui move build -p wormhole_token_bridge_resolver
 
 # Run tests
 sui move test -p sui_ptb_resolver
-sui move test -p wormhole_token_bridge_resolver
 ```
 
 ### TypeScript Usage
@@ -357,8 +360,8 @@ execution.
 
 - **[sui_ptb_resolver README](./sui_ptb_resolver/README.md)** - Complete Move
   framework documentation
-- **[wormhole_token_bridge_resolver README](./wormhole_token_bridge_resolver/README.md)** -
-  POC implementation details
+- **[Token Bridge Relayer V4 resolver](https://github.com/wormholelabs-xyz/example-permissionless-token-bridge-executor-shim)** -
+  Production reference resolver (`sui/token_bridge_ptb_resolver`)
 - **[Example Code](./examples/token_bridge_resolver_sample.ts)** - TypeScript
   usage example
 
