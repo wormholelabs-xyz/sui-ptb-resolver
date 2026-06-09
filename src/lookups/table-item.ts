@@ -1,5 +1,5 @@
 import { bcs } from '@mysten/sui/bcs';
-import type { SuiClient } from '@mysten/sui/client';
+import type { SuiJsonRpcClient } from '@mysten/sui/jsonRpc';
 
 import { bytesToAddress, stringToBytes } from '../bcs/converters.js';
 import type { OffchainLookup, StructField } from '../types/index.js';
@@ -19,7 +19,7 @@ export class TableItemHandler
 {
   async resolve(
     lookup: Extract<OffchainLookup, { variant: 'TableItem' }>,
-    client: SuiClient
+    client: SuiJsonRpcClient
   ): Promise<Uint8Array> {
     const { parent_object, table_path, key_raw, key_structured, key_type, placeholder_name } =
       lookup.fields;
@@ -146,7 +146,7 @@ export class TableItemHandler
   }
 
   private async navigateTablePath(
-    client: SuiClient,
+    client: SuiJsonRpcClient,
     parentAddress: string,
     path: string
   ): Promise<string> {

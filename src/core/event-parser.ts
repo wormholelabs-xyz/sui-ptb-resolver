@@ -5,7 +5,7 @@
  * Reconstructs OffchainLookup and PTB instructions from event data.
  */
 
-import type { SuiEvent } from '@mysten/sui/client';
+import type { SuiEvent } from '@mysten/sui/jsonRpc';
 
 import { addressToBytes, arrayToBytes } from '../bcs/converters.js';
 import { ResolverInstructionsEventBCS } from '../bcs/schemas.js';
