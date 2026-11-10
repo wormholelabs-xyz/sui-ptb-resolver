@@ -78,7 +78,7 @@ jobs:
           EOF
 
       - name: Upload audit log
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: security-audit-${{ github.run_id }}
           path: audit-logs/
@@ -104,25 +104,25 @@ jobs:
       tag_name: ${{ steps.release.outputs.new_release_git_tag }}
       version: ${{ steps.release.outputs.new_release_version }}
     steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
           persist-credentials: false
 
       - name: Setup Bun
-        uses: oven-sh/setup-bun@735343b667d3e6f658f44d0eca948eb6282f2b76 # pinning the commit to v2
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         with:
-          bun-version: latest
+          bun-version: "1.4.4"
           no-cache: true
 
       - name: Setup Node.js
-        # No `cache:` input -> setup-node does not enable actions/cache, so the
-        # cache-poisoning vector does not apply here. Node is only needed for
-        # `npm audit signatures` and the npm publish/verify (deps install via Bun).
-        # Suppressed in .github/zizmor.yml (rules.cache-poisoning).
-        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        # Node is only needed for `npm audit signatures` and the npm publish/verify
+        # (deps install via Bun). Package-manager caching is explicitly disabled so
+        # setup-node never enables actions/cache (no cache-poisoning vector).
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
-          node-version: "lts/*"
+          node-version-file: ".nvmrc"
+          package-manager-cache: false
 
       - name: Install dependencies
         run: bun install --frozen-lockfile
